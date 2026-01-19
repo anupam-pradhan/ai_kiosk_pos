@@ -202,8 +202,8 @@ class MainActivity : FlutterActivity(), TerminalListener {
         }
         resolveLocationId(locationId, onError) { resolvedLocationId ->
           val config = DiscoveryConfiguration.LocalMobileDiscoveryConfiguration(
-            // isSimulated = BuildConfig.DEBUG
-            isSimulated = false
+            isSimulated = BuildConfig.DEBUG
+            // isSimulated = false
           )
           discoveryCancelable = terminal.discoverReaders(
             config,
