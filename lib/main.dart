@@ -64,10 +64,33 @@ class _KioskWebViewState extends State<KioskWebView> {
           initialSettings: InAppWebViewSettings(
             javaScriptEnabled: true,
             mediaPlaybackRequiresUserGesture: false,
+            allowsInlineMediaPlayback: true,
             // recommended for kiosk:
             disableContextMenu: true,
             transparentBackground: false,
           ),
+          onPermissionRequest: (controller, request) async {
+            final needsMic = request.resources
+                .contains(PermissionResourceType.MICROPHONE);
+            if (needsMic) {
+              debugPrint(
+                "WebView permission request: ${request.resources}",
+              );
+              final granted = await terminalChannel.invokeMethod<bool>(
+                "requestMicrophonePermission",
+              );
+              if (granted != true) {
+                return PermissionResponse(
+                  resources: request.resources,
+                  action: PermissionResponseAction.DENY,
+                );
+              }
+            }
+            return PermissionResponse(
+              resources: request.resources,
+              action: PermissionResponseAction.GRANT,
+            );
+          },
           onWebViewCreated: (controller) {
             _webViewController = controller;
             controller.addJavaScriptHandler(

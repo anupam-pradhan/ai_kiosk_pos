@@ -2,9 +2,12 @@ package com.example.ai_kiosk_pos
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.location.LocationManager
 import androidx.core.app.ActivityCompat
@@ -54,6 +57,9 @@ class MainActivity : FlutterActivity(), TerminalListener {
   )
 
   private val locationPermissionRequestCode = 1001
+  private val microphonePermissionRequestCode = 1002
+  private val microphonePermission = Manifest.permission.RECORD_AUDIO
+  private var pendingMicrophoneResult: MethodChannel.Result? = null
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
@@ -64,6 +70,9 @@ class MainActivity : FlutterActivity(), TerminalListener {
           "startTapToPay" -> {
             val args = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
             startTapToPay(args, result)
+          }
+          "requestMicrophonePermission" -> {
+            requestMicrophonePermission(result)
           }
           else -> result.notImplemented()
         }
@@ -342,6 +351,37 @@ class MainActivity : FlutterActivity(), TerminalListener {
     ActivityCompat.requestPermissions(this, locationPermissions, locationPermissionRequestCode)
   }
 
+  private fun requestMicrophonePermission(result: MethodChannel.Result) {
+    if (ContextCompat.checkSelfPermission(this, microphonePermission) ==
+      PackageManager.PERMISSION_GRANTED
+    ) {
+      result.success(true)
+      return
+    }
+
+    if (pendingMicrophoneResult != null) {
+      result.success(false)
+      return
+    }
+
+    pendingMicrophoneResult = result
+    ActivityCompat.requestPermissions(
+      this,
+      arrayOf(microphonePermission),
+      microphonePermissionRequestCode
+    )
+  }
+
+  private fun openAppSettings() {
+    val intent = Intent(
+      Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+      Uri.fromParts("package", packageName, null)
+    ).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    startActivity(intent)
+  }
+
   private fun hasLocationPermission(): Boolean {
     return locationPermissions.all { permission ->
       ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
@@ -375,6 +415,27 @@ class MainActivity : FlutterActivity(), TerminalListener {
       } else {
         onDenied?.invoke()
       }
+      return
+    }
+    if (requestCode == microphonePermissionRequestCode) {
+      val granted = grantResults.isNotEmpty() &&
+        grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+      if (granted) {
+        Log.d("KioskPermissions", "Microphone permission granted")
+        pendingMicrophoneResult?.success(true)
+      } else {
+        Log.w("KioskPermissions", "Microphone permission denied")
+        val canAskAgain = ActivityCompat.shouldShowRequestPermissionRationale(
+          this,
+          microphonePermission
+        )
+        if (!canAskAgain) {
+          Log.w("KioskPermissions", "Microphone permission permanently denied; opening settings")
+          openAppSettings()
+        }
+        pendingMicrophoneResult?.success(false)
+      }
+      pendingMicrophoneResult = null
       return
     }
 

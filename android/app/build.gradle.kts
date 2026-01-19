@@ -23,10 +23,6 @@ android {
         buildConfig = true
     }
 
-    packagingOptions {
-        doNotStrip("**/*.so")
-    }
-
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.ai_kiosk_pos"
