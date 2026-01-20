@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -45,6 +46,7 @@ class _KioskWebViewState extends State<KioskWebView> {
   bool _showSplash = true;
   bool _splashMinElapsed = false;
   bool _pageLoaded = false;
+  bool _nfcChecked = false;
 
   @override
   void initState() {
@@ -75,6 +77,84 @@ class _KioskWebViewState extends State<KioskWebView> {
     await controller.evaluateJavascript(
       source:
           "window.onNativePaymentStatus && window.onNativePaymentStatus($jsonPayload);",
+    );
+  }
+
+  Future<Map<String, dynamic>> _getNfcStatus() async {
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      return {"supported": true, "enabled": true};
+    }
+    try {
+      final res = await terminalChannel.invokeMethod<dynamic>("getNfcStatus");
+      if (res is Map) return Map<String, dynamic>.from(res);
+    } on PlatformException {
+      return {"supported": false, "enabled": false};
+    }
+    return {"supported": false, "enabled": false};
+  }
+
+  Future<void> _openNfcSettings() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await terminalChannel.invokeMethod<void>("openNfcSettings");
+    } on PlatformException {
+      // Best-effort only; ignore failures.
+    }
+  }
+
+  Future<void> _checkNfcOnStartup() async {
+    if (_nfcChecked) return;
+    _nfcChecked = true;
+    final status = await _getNfcStatus();
+    final supported = status["supported"] == true;
+    final enabled = status["enabled"] == true;
+    if (!supported) {
+      await _notifyWebStatus({
+        "ok": false,
+        "type": "DEVICE_CAPABILITY",
+        "code": "NFC_UNSUPPORTED",
+        "errorCode": "NFC_UNSUPPORTED",
+        "reason": "NFC_UNSUPPORTED",
+      });
+      return;
+    }
+    if (!enabled) {
+      await _showNfcDisabledDialog();
+    }
+  }
+
+  Future<void> _showNfcDisabledDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Row(
+            children: const [
+              Icon(Icons.nfc, color: Colors.orange),
+              SizedBox(width: 8),
+              Expanded(child: Text("Enable NFC")),
+            ],
+          ),
+          content: const Text(
+            "Tap to Pay needs NFC. Please enable NFC in settings to continue.",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await _openNfcSettings();
+              },
+              child: const Text("Open Settings"),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -266,6 +346,7 @@ class _KioskWebViewState extends State<KioskWebView> {
                 _pageLoaded = true;
                 _maybeHideSplash();
                 setState(() => _isPageLoading = false);
+                _checkNfcOnStartup();
               },
               onReceivedError: (controller, request, error) async {
                 if (!mounted) return;
@@ -325,6 +406,32 @@ class _KioskWebViewState extends State<KioskWebView> {
 
                     // ✅ Tap-to-Pay entrypoint
                     if (type == "START_TAP_TO_PAY") {
+                      final nfcStatus = await _getNfcStatus();
+                      final nfcSupported = nfcStatus["supported"] == true;
+                      final nfcEnabled = nfcStatus["enabled"] == true;
+                      if (!nfcSupported) {
+                        final errorPayload = {
+                          "ok": false,
+                          "type": "PAYMENT_RESULT",
+                          "code": "NFC_UNSUPPORTED",
+                          "errorCode": "NFC_UNSUPPORTED",
+                          "reason": "NFC_UNSUPPORTED",
+                        };
+                        await _notifyWebStatus(errorPayload);
+                        return errorPayload;
+                      }
+                      if (!nfcEnabled) {
+                        final errorPayload = {
+                          "ok": false,
+                          "type": "PAYMENT_RESULT",
+                          "code": "NFC_DISABLED",
+                          "errorCode": "NFC_DISABLED",
+                          "reason": "NFC_DISABLED",
+                        };
+                        await _notifyWebStatus(errorPayload);
+                        return errorPayload;
+                      }
+
                       final amount = payload["amount"];
                       final currency = payload["currency"];
                       final orderId = payload["orderId"];

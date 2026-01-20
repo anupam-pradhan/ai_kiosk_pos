@@ -10,6 +10,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.location.LocationManager
+import android.nfc.NfcAdapter
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.ai_kiosk_pos.BuildConfig
@@ -73,6 +74,13 @@ class MainActivity : FlutterActivity(), TerminalListener {
           }
           "requestMicrophonePermission" -> {
             requestMicrophonePermission(result)
+          }
+          "getNfcStatus" -> {
+            getNfcStatus(result)
+          }
+          "openNfcSettings" -> {
+            openNfcSettings()
+            result.success(true)
           }
           else -> result.notImplemented()
         }
@@ -372,6 +380,17 @@ class MainActivity : FlutterActivity(), TerminalListener {
     )
   }
 
+  private fun getNfcStatus(result: MethodChannel.Result) {
+    val supported = packageManager.hasSystemFeature(PackageManager.FEATURE_NFC)
+    val enabled = NfcAdapter.getDefaultAdapter(this)?.isEnabled == true
+    result.success(
+      mapOf(
+        "supported" to supported,
+        "enabled" to enabled
+      )
+    )
+  }
+
   private fun openAppSettings() {
     val intent = Intent(
       Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -380,6 +399,20 @@ class MainActivity : FlutterActivity(), TerminalListener {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     startActivity(intent)
+  }
+
+  private fun openNfcSettings() {
+    val intent = Intent(Settings.ACTION_NFC_SETTINGS).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    if (intent.resolveActivity(packageManager) != null) {
+      startActivity(intent)
+      return
+    }
+    val fallback = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    startActivity(fallback)
   }
 
   private fun hasLocationPermission(): Boolean {
