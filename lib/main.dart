@@ -3,10 +3,42 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-void main() {
+class AppConfig {
+  static String get appMode =>
+      dotenv.env['APP_MODE'] ??
+      const String.fromEnvironment('APP_MODE', defaultValue: 'test');
+
+  static String get kioskUrlLive =>
+      dotenv.env['KIOSK_URL_LIVE'] ??
+      const String.fromEnvironment(
+        'KIOSK_URL_LIVE',
+        defaultValue: 'https://aikiosk-ai-testing-vercel.vercel.app/',
+      );
+
+  static String get kioskUrlTest =>
+      dotenv.env['KIOSK_URL_TEST'] ??
+      const String.fromEnvironment(
+        'KIOSK_URL_TEST',
+        defaultValue: 'http://192.168.1.161:3000',
+      );
+
+  static bool get isLive => appMode.toLowerCase() == 'live';
+  static String get kioskUrl => isLive ? kioskUrlLive : kioskUrlTest;
+  static bool get isTapToPaySimulated {
+    final raw =
+        dotenv.env['TAP_TO_PAY_SIMULATED'] ??
+        const String.fromEnvironment('TAP_TO_PAY_SIMULATED');
+    if (raw.isEmpty) return !isLive;
+    return raw.toLowerCase() == 'true';
+  }
+}
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
   runApp(const KioskApp());
 }
 
@@ -31,8 +63,7 @@ class KioskWebView extends StatefulWidget {
 
 class _KioskWebViewState extends State<KioskWebView> {
   // ✅ Your kiosk web app URL (Vite/Next/etc)
-  final String kioskUrl = "http://192.168.1.161:3000";
-  // final String kioskUrl = "https://aikiosk-ai-testing-vercel.vercel.app/";
+  final String kioskUrl = AppConfig.kioskUrl;
 
   // ✅ Dart -> Native Android bridge
   static const MethodChannel terminalChannel = MethodChannel(
@@ -483,6 +514,7 @@ class _KioskWebViewState extends State<KioskWebView> {
                               "clientSecret": clientSecret,
                               "terminalBaseUrl": terminalBaseUrl,
                               "locationId": locationId,
+                              "isSimulated": AppConfig.isTapToPaySimulated,
                             });
 
                         if (mounted) {

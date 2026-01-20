@@ -99,6 +99,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
     val orderId = args["orderId"] as? String
     val locationId = args["locationId"] as? String
     val baseUrl = args["terminalBaseUrl"] as? String
+    val isSimulated = args["isSimulated"] as? Boolean ?: BuildConfig.DEBUG
 
     if (clientSecret.isNullOrBlank() || baseUrl.isNullOrBlank()) {
       finishWithError("INVALID_ARGUMENTS", "Missing clientSecret or terminalBaseUrl", null)
@@ -115,6 +116,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
     ensureTerminalInitialized(normalizedBaseUrl) {
       ensureReaderConnected(
         locationId,
+        isSimulated,
         onConnected = { _ ->
           retrieveAndProcessPayment(clientSecret, orderId)
         },
@@ -187,6 +189,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
 
   private fun ensureReaderConnected(
     locationId: String?,
+    isSimulated: Boolean,
     onConnected: (Reader) -> Unit,
     onError: (TerminalException) -> Unit
   ) {
@@ -210,8 +213,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
         }
         resolveLocationId(locationId, onError) { resolvedLocationId ->
           val config = DiscoveryConfiguration.LocalMobileDiscoveryConfiguration(
-            isSimulated = BuildConfig.DEBUG
-            // isSimulated = false
+            isSimulated = isSimulated
           )
           discoveryCancelable = terminal.discoverReaders(
             config,
