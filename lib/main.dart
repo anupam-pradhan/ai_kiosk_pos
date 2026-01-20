@@ -30,8 +30,8 @@ class KioskWebView extends StatefulWidget {
 
 class _KioskWebViewState extends State<KioskWebView> {
   // ✅ Your kiosk web app URL (Vite/Next/etc)
-  // final String kioskUrl = "http://192.168.1.161:3000";
-  final String kioskUrl = "https://aikiosk-ai-testing-vercel.vercel.app/";
+  final String kioskUrl = "http://192.168.1.161:3000";
+  // final String kioskUrl = "https://aikiosk-ai-testing-vercel.vercel.app/";
 
   // ✅ Dart -> Native Android bridge
   static const MethodChannel terminalChannel = MethodChannel(
@@ -42,6 +42,26 @@ class _KioskWebViewState extends State<KioskWebView> {
   bool _isPageLoading = true;
   bool _isPaymentProcessing = false;
   bool _isMicRequesting = false;
+  bool _showSplash = true;
+  bool _splashMinElapsed = false;
+  bool _pageLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      _splashMinElapsed = true;
+      _maybeHideSplash();
+    });
+  }
+
+  void _maybeHideSplash() {
+    if (!_showSplash) return;
+    if (_splashMinElapsed && _pageLoaded) {
+      setState(() => _showSplash = false);
+    }
+  }
 
   Map<String, dynamic> _safeMap(dynamic v) {
     if (v is Map) return Map<String, dynamic>.from(v);
@@ -132,6 +152,7 @@ class _KioskWebViewState extends State<KioskWebView> {
   }
 
   Widget _buildLoadingOverlay() {
+    if (_showSplash) return const SizedBox.shrink();
     final show = _isPageLoading || _isPaymentProcessing || _isMicRequesting;
     if (!show) return const SizedBox.shrink();
     final label = _isMicRequesting
@@ -146,10 +167,7 @@ class _KioskWebViewState extends State<KioskWebView> {
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [
-                  Color(0xFFFFF2E9),
-                  Color(0xFFFFF8F4),
-                ],
+                colors: [Color(0xFFFFF2E9), Color(0xFFFFF8F4)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -197,6 +215,31 @@ class _KioskWebViewState extends State<KioskWebView> {
     );
   }
 
+  Widget _buildInAppSplash() {
+    if (!_showSplash) return const SizedBox.shrink();
+    const bgColor = Color(0xFFF3F4F6);
+    const logoColor = Color(0xFFC2410C);
+    return Positioned.fill(
+      child: Container(
+        color: bgColor,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              CircleAvatar(
+                radius: 46,
+                backgroundColor: logoColor,
+                child: Icon(Icons.restaurant, color: Colors.white, size: 42),
+              ),
+              SizedBox(height: 18),
+              _DotLoader(color: logoColor),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -215,15 +258,20 @@ class _KioskWebViewState extends State<KioskWebView> {
               ),
               onLoadStart: (controller, url) {
                 if (!mounted) return;
+                _pageLoaded = false;
                 setState(() => _isPageLoading = true);
               },
               onLoadStop: (controller, url) {
                 if (!mounted) return;
+                _pageLoaded = true;
+                _maybeHideSplash();
                 setState(() => _isPageLoading = false);
               },
               onReceivedError: (controller, request, error) async {
                 if (!mounted) return;
                 if (request.isForMainFrame != true) return;
+                _pageLoaded = true;
+                _maybeHideSplash();
                 setState(() => _isPageLoading = false);
                 await _showPaymentErrorDialog(
                   title: "Page Load Error",
@@ -232,8 +280,9 @@ class _KioskWebViewState extends State<KioskWebView> {
                 );
               },
               onPermissionRequest: (controller, request) async {
-                final needsMic = request.resources
-                    .contains(PermissionResourceType.MICROPHONE);
+                final needsMic = request.resources.contains(
+                  PermissionResourceType.MICROPHONE,
+                );
                 if (needsMic) {
                   debugPrint(
                     "WebView permission request: ${request.resources}",
@@ -339,9 +388,7 @@ class _KioskWebViewState extends State<KioskWebView> {
                           "data": nativeRes,
                         });
 
-                        await _showPaymentSuccessDialog(
-                          "Payment successful.",
-                        );
+                        await _showPaymentSuccessDialog("Payment successful.");
 
                         return {"ok": true, "data": nativeRes};
                       } on PlatformException catch (e) {
@@ -393,7 +440,8 @@ class _KioskWebViewState extends State<KioskWebView> {
 
                     await _showPaymentErrorDialog(
                       title: "Unsupported Request",
-                      message: "Unknown command from web app: ${type ?? 'null'}",
+                      message:
+                          "Unknown command from web app: ${type ?? 'null'}",
                       icon: Icons.help_outline,
                     );
                     return {
@@ -406,9 +454,66 @@ class _KioskWebViewState extends State<KioskWebView> {
               },
             ),
             _buildLoadingOverlay(),
+            _buildInAppSplash(),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DotLoader extends StatefulWidget {
+  const _DotLoader({required this.color});
+
+  final Color color;
+
+  @override
+  State<_DotLoader> createState() => _DotLoaderState();
+}
+
+class _DotLoaderState extends State<_DotLoader>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(3, (index) {
+        final start = index * 0.2;
+        final end = start + 0.6;
+        final animation = CurvedAnimation(
+          parent: _controller,
+          curve: Interval(start, end, curve: Curves.easeInOut),
+        );
+        return FadeTransition(
+          opacity: animation,
+          child: Container(
+            width: 7,
+            height: 7,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: BoxDecoration(
+              color: widget.color,
+              shape: BoxShape.circle,
+            ),
+          ),
+        );
+      }),
     );
   }
 }
