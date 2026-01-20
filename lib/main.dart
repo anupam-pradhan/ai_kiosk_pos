@@ -61,7 +61,8 @@ class KioskWebView extends StatefulWidget {
   State<KioskWebView> createState() => _KioskWebViewState();
 }
 
-class _KioskWebViewState extends State<KioskWebView> {
+class _KioskWebViewState extends State<KioskWebView>
+    with WidgetsBindingObserver {
   // ✅ Your kiosk web app URL (Vite/Next/etc)
   final String kioskUrl = AppConfig.kioskUrl;
 
@@ -81,15 +82,30 @@ class _KioskWebViewState extends State<KioskWebView> {
   bool _hasPageLoadError = false;
   String _pageLoadErrorMessage = '';
   bool _showWebView = true;
+  bool _nfcResumeCheckInFlight = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
       _splashMinElapsed = true;
       _maybeHideSplash();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkNfcOnResume();
+    }
   }
 
   void _maybeHideSplash() {
@@ -154,6 +170,31 @@ class _KioskWebViewState extends State<KioskWebView> {
     }
     if (!enabled) {
       await _showNfcDisabledDialog();
+    }
+  }
+
+  Future<void> _checkNfcOnResume() async {
+    if (_nfcResumeCheckInFlight) return;
+    _nfcResumeCheckInFlight = true;
+    try {
+      final status = await _getNfcStatus();
+      final supported = status["supported"] == true;
+      final enabled = status["enabled"] == true;
+      if (!supported) {
+        await _notifyWebStatus({
+          "ok": false,
+          "type": "DEVICE_CAPABILITY",
+          "code": "NFC_UNSUPPORTED",
+          "errorCode": "NFC_UNSUPPORTED",
+          "reason": "NFC_UNSUPPORTED",
+        });
+        return;
+      }
+      if (!enabled) {
+        await _showNfcDisabledDialog();
+      }
+    } finally {
+      _nfcResumeCheckInFlight = false;
     }
   }
 
@@ -406,263 +447,249 @@ class _KioskWebViewState extends State<KioskWebView> {
       body: SafeArea(
         child: Stack(
           children: [
-            Opacity(
-              opacity: _showWebView ? 1 : 0,
-              child: IgnorePointer(
-                ignoring: !_showWebView,
-                child: InAppWebView(
-                  initialUrlRequest: URLRequest(url: WebUri(kioskUrl)),
-                  initialSettings: InAppWebViewSettings(
-                    javaScriptEnabled: true,
-                    mediaPlaybackRequiresUserGesture: false,
-                    allowsInlineMediaPlayback: true,
-                    // recommended for kiosk:
-                    disableContextMenu: true,
-                    transparentBackground: false,
-                  ),
-                  onLoadStart: (controller, url) {
-                    if (!mounted) return;
-                    _pageLoaded = false;
-                    setState(() {
-                      _isPageLoading = true;
-                      _hasPageLoadError = false;
-                      _pageLoadErrorMessage = '';
-                    });
-                  },
-                  onLoadStop: (controller, url) {
-                    if (!mounted) return;
-                    _pageLoaded = true;
-                    _maybeHideSplash();
-                    setState(() {
-                      _isPageLoading = false;
-                      _showWebView = true;
-                    });
-                    _checkNfcOnStartup();
-                  },
-                  onReceivedError: (controller, request, error) async {
-                    if (!mounted) return;
-                    if (request.isForMainFrame != true) return;
-                    _pageLoaded = true;
-                    _maybeHideSplash();
-                    setState(() {
-                      _isPageLoading = false;
-                      _hasPageLoadError = true;
-                      _pageLoadErrorMessage = error.description;
-                      _showWebView = false;
-                    });
-                    await _showPaymentErrorDialog(
-                      title: "Page Load Error",
-                      message: error.description,
-                      icon: Icons.wifi_off,
+            Offstage(
+              offstage: !_showWebView,
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(kioskUrl)),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  mediaPlaybackRequiresUserGesture: false,
+                  allowsInlineMediaPlayback: true,
+                  // recommended for kiosk:
+                  disableContextMenu: true,
+                  transparentBackground: false,
+                ),
+                onLoadStart: (controller, url) {
+                  if (!mounted) return;
+                  _pageLoaded = false;
+                  setState(() {
+                    _isPageLoading = true;
+                    _hasPageLoadError = false;
+                    _pageLoadErrorMessage = '';
+                  });
+                },
+                onLoadStop: (controller, url) {
+                  if (!mounted) return;
+                  _pageLoaded = true;
+                  _maybeHideSplash();
+                  setState(() {
+                    _isPageLoading = false;
+                    _showWebView = true;
+                  });
+                  _checkNfcOnStartup();
+                },
+                onReceivedError: (controller, request, error) async {
+                  if (!mounted) return;
+                  if (request.isForMainFrame != true) return;
+                  _pageLoaded = true;
+                  _maybeHideSplash();
+                  setState(() {
+                    _isPageLoading = false;
+                    _hasPageLoadError = true;
+                    _pageLoadErrorMessage = error.description;
+                    _showWebView = false;
+                  });
+                },
+                onPermissionRequest: (controller, request) async {
+                  final needsMic = request.resources.contains(
+                    PermissionResourceType.MICROPHONE,
+                  );
+                  if (needsMic) {
+                    debugPrint(
+                      "WebView permission request: ${request.resources}",
                     );
-                  },
-                  onPermissionRequest: (controller, request) async {
-                    final needsMic = request.resources.contains(
-                      PermissionResourceType.MICROPHONE,
-                    );
-                    if (needsMic) {
-                      debugPrint(
-                        "WebView permission request: ${request.resources}",
-                      );
-                      if (mounted) {
-                        setState(() => _isMicRequesting = true);
-                      }
-                      final granted = await terminalChannel.invokeMethod<bool>(
-                        "requestMicrophonePermission",
-                      );
-                      if (mounted) {
-                        setState(() => _isMicRequesting = false);
-                      }
-                      if (granted != true) {
-                        return PermissionResponse(
-                          resources: request.resources,
-                          action: PermissionResponseAction.DENY,
-                        );
-                      }
+                    if (mounted) {
+                      setState(() => _isMicRequesting = true);
                     }
-                    return PermissionResponse(
-                      resources: request.resources,
-                      action: PermissionResponseAction.GRANT,
+                    final granted = await terminalChannel.invokeMethod<bool>(
+                      "requestMicrophonePermission",
                     );
-                  },
-                  onWebViewCreated: (controller) {
-                    _webViewController = controller;
-                    controller.addJavaScriptHandler(
-                      handlerName: "kioskBridge",
-                      callback: (args) async {
-                        // Web calls: window.flutter_inappwebview.callHandler("kioskBridge", payload)
-                        final payload =
-                            (args.isNotEmpty) ? _safeMap(args[0]) : {};
+                    if (mounted) {
+                      setState(() => _isMicRequesting = false);
+                    }
+                    if (granted != true) {
+                      return PermissionResponse(
+                        resources: request.resources,
+                        action: PermissionResponseAction.DENY,
+                      );
+                    }
+                  }
+                  return PermissionResponse(
+                    resources: request.resources,
+                    action: PermissionResponseAction.GRANT,
+                  );
+                },
+                onWebViewCreated: (controller) {
+                  _webViewController = controller;
+                  controller.addJavaScriptHandler(
+                    handlerName: "kioskBridge",
+                    callback: (args) async {
+                      // Web calls: window.flutter_inappwebview.callHandler("kioskBridge", payload)
+                      final payload =
+                          (args.isNotEmpty) ? _safeMap(args[0]) : {};
 
-                        final type = payload["type"];
+                      final type = payload["type"];
 
-                        // ✅ Health ping for debugging
-                        if (type == "PING") {
+                      // ✅ Health ping for debugging
+                      if (type == "PING") {
+                        return {"ok": true, "pong": true, "platform": "flutter"};
+                      }
+
+                      // ✅ Tap-to-Pay entrypoint
+                      if (type == "START_TAP_TO_PAY") {
+                        final nfcStatus = await _getNfcStatus();
+                        final nfcSupported = nfcStatus["supported"] == true;
+                        final nfcEnabled = nfcStatus["enabled"] == true;
+                        if (!nfcSupported) {
+                          final errorPayload = {
+                            "ok": false,
+                            "type": "PAYMENT_RESULT",
+                            "code": "NFC_UNSUPPORTED",
+                            "errorCode": "NFC_UNSUPPORTED",
+                            "reason": "NFC_UNSUPPORTED",
+                          };
+                          await _notifyWebStatus(errorPayload);
+                          return errorPayload;
+                        }
+                        if (!nfcEnabled) {
+                          final errorPayload = {
+                            "ok": false,
+                            "type": "PAYMENT_RESULT",
+                            "code": "NFC_DISABLED",
+                            "errorCode": "NFC_DISABLED",
+                            "reason": "NFC_DISABLED",
+                          };
+                          await _notifyWebStatus(errorPayload);
+                          return errorPayload;
+                        }
+
+                        final amount = payload["amount"];
+                        final currency = payload["currency"];
+                        final orderId = payload["orderId"];
+
+                        // These 3 are REQUIRED for real Stripe Terminal flow:
+                        final paymentIntentId = payload["paymentIntentId"];
+                        final clientSecret = payload["clientSecret"];
+                        final terminalBaseUrl = payload["terminalBaseUrl"];
+                        final locationId = payload["locationId"];
+
+                        // Validate (fail fast with clear reason)
+                        final missing = <String, bool>{
+                          "amount": amount == null,
+                          "currency": currency == null,
+                          "orderId": orderId == null,
+                          "paymentIntentId": paymentIntentId == null,
+                          "clientSecret": clientSecret == null,
+                          "terminalBaseUrl": terminalBaseUrl == null,
+                          "locationId": locationId == null,
+                        };
+
+                        final hasMissing = missing.values.any((v) => v == true);
+                        if (hasMissing) {
+                          await _showPaymentErrorDialog(
+                            title: "Payment Error",
+                            message: "Payment request is missing required fields.",
+                          );
                           return {
-                            "ok": true,
-                            "pong": true,
-                            "platform": "flutter"
+                            "ok": false,
+                            "reason": "MISSING_FIELDS",
+                            "missing": missing,
+                            "hint":
+                                "terminalBaseUrl must be LAN IP like http://192.168.1.161:4242 (not localhost).",
                           };
                         }
 
-                        // ✅ Tap-to-Pay entrypoint
-                        if (type == "START_TAP_TO_PAY") {
-                          final nfcStatus = await _getNfcStatus();
-                          final nfcSupported = nfcStatus["supported"] == true;
-                          final nfcEnabled = nfcStatus["enabled"] == true;
-                          if (!nfcSupported) {
-                            final errorPayload = {
-                              "ok": false,
-                              "type": "PAYMENT_RESULT",
-                              "code": "NFC_UNSUPPORTED",
-                              "errorCode": "NFC_UNSUPPORTED",
-                              "reason": "NFC_UNSUPPORTED",
-                            };
-                            await _notifyWebStatus(errorPayload);
-                            return errorPayload;
-                          }
-                          if (!nfcEnabled) {
-                            final errorPayload = {
-                              "ok": false,
-                              "type": "PAYMENT_RESULT",
-                              "code": "NFC_DISABLED",
-                              "errorCode": "NFC_DISABLED",
-                              "reason": "NFC_DISABLED",
-                            };
-                            await _notifyWebStatus(errorPayload);
-                            return errorPayload;
-                          }
-
-                          final amount = payload["amount"];
-                          final currency = payload["currency"];
-                          final orderId = payload["orderId"];
-
-                          // These 3 are REQUIRED for real Stripe Terminal flow:
-                          final paymentIntentId = payload["paymentIntentId"];
-                          final clientSecret = payload["clientSecret"];
-                          final terminalBaseUrl = payload["terminalBaseUrl"];
-                          final locationId = payload["locationId"];
-
-                          // Validate (fail fast with clear reason)
-                          final missing = <String, bool>{
-                            "amount": amount == null,
-                            "currency": currency == null,
-                            "orderId": orderId == null,
-                            "paymentIntentId": paymentIntentId == null,
-                            "clientSecret": clientSecret == null,
-                            "terminalBaseUrl": terminalBaseUrl == null,
-                            "locationId": locationId == null,
-                          };
-
-                          final hasMissing =
-                              missing.values.any((v) => v == true);
-                          if (hasMissing) {
-                            await _showPaymentErrorDialog(
-                              title: "Payment Error",
-                              message:
-                                  "Payment request is missing required fields.",
-                            );
-                            return {
-                              "ok": false,
-                              "reason": "MISSING_FIELDS",
-                              "missing": missing,
-                              "hint":
-                                  "terminalBaseUrl must be LAN IP like http://192.168.1.161:4242 (not localhost).",
-                            };
-                          }
+                        if (mounted) {
+                          setState(() => _isPaymentProcessing = true);
+                        }
+                        try {
+                          // Forward everything to native Android (Kotlin)
+                          final nativeRes = await terminalChannel
+                              .invokeMethod("startTapToPay", {
+                                "amount": amount,
+                                "currency": currency,
+                                "orderId": orderId,
+                                "paymentIntentId": paymentIntentId,
+                                "clientSecret": clientSecret,
+                                "terminalBaseUrl": terminalBaseUrl,
+                                "locationId": locationId,
+                                "isSimulated": AppConfig.isTapToPaySimulated,
+                              });
 
                           if (mounted) {
-                            setState(() => _isPaymentProcessing = true);
+                            setState(() => _isPaymentProcessing = false);
                           }
-                          try {
-                            // Forward everything to native Android (Kotlin)
-                            final nativeRes = await terminalChannel
-                                .invokeMethod("startTapToPay", {
-                                  "amount": amount,
-                                  "currency": currency,
-                                  "orderId": orderId,
-                                  "paymentIntentId": paymentIntentId,
-                                  "clientSecret": clientSecret,
-                                  "terminalBaseUrl": terminalBaseUrl,
-                                  "locationId": locationId,
-                                  "isSimulated": AppConfig.isTapToPaySimulated,
-                                });
 
-                            if (mounted) {
-                              setState(() => _isPaymentProcessing = false);
-                            }
+                          await _notifyWebStatus({
+                            "ok": true,
+                            "type": "PAYMENT_RESULT",
+                            "data": nativeRes,
+                          });
 
-                            await _notifyWebStatus({
-                              "ok": true,
-                              "type": "PAYMENT_RESULT",
-                              "data": nativeRes,
-                            });
+                          await _showPaymentSuccessDialog("Payment successful.");
 
-                            await _showPaymentSuccessDialog("Payment successful.");
-
-                            return {"ok": true, "data": nativeRes};
-                          } on PlatformException catch (e) {
-                            if (mounted) {
-                              setState(() => _isPaymentProcessing = false);
-                            }
-                            final errorPayload = {
-                              "ok": false,
-                              "type": "PAYMENT_RESULT",
-                              "reason": "NATIVE_ERROR",
-                              "code": e.code,
-                              "message": e.message,
-                              "details": e.details,
-                            };
-                            await _showPaymentErrorDialog(
-                              title: "Payment Failed",
-                              message: e.message ??
-                                  "Payment failed. Please try again.",
-                            );
-                            await _notifyWebStatus(errorPayload);
-                            return {
-                              "ok": false,
-                              "reason": "NATIVE_ERROR",
-                              "code": e.code,
-                              "message": e.message,
-                              "details": e.details,
-                            };
-                          } catch (e) {
-                            if (mounted) {
-                              setState(() => _isPaymentProcessing = false);
-                            }
-                            await _showPaymentErrorDialog(
-                              title: "Payment Failed",
-                              message: "Payment failed. ${e.toString()}",
-                            );
-                            await _notifyWebStatus({
-                              "ok": false,
-                              "type": "PAYMENT_RESULT",
-                              "reason": "NATIVE_ERROR",
-                              "message": e.toString(),
-                            });
-                            return {
-                              "ok": false,
-                              "reason": "NATIVE_ERROR",
-                              "message": e.toString(),
-                            };
+                          return {"ok": true, "data": nativeRes};
+                        } on PlatformException catch (e) {
+                          if (mounted) {
+                            setState(() => _isPaymentProcessing = false);
                           }
+                          final errorPayload = {
+                            "ok": false,
+                            "type": "PAYMENT_RESULT",
+                            "reason": "NATIVE_ERROR",
+                            "code": e.code,
+                            "message": e.message,
+                            "details": e.details,
+                          };
+                          await _showPaymentErrorDialog(
+                            title: "Payment Failed",
+                            message:
+                                e.message ?? "Payment failed. Please try again.",
+                          );
+                          await _notifyWebStatus(errorPayload);
+                          return {
+                            "ok": false,
+                            "reason": "NATIVE_ERROR",
+                            "code": e.code,
+                            "message": e.message,
+                            "details": e.details,
+                          };
+                        } catch (e) {
+                          if (mounted) {
+                            setState(() => _isPaymentProcessing = false);
+                          }
+                          await _showPaymentErrorDialog(
+                            title: "Payment Failed",
+                            message: "Payment failed. ${e.toString()}",
+                          );
+                          await _notifyWebStatus({
+                            "ok": false,
+                            "type": "PAYMENT_RESULT",
+                            "reason": "NATIVE_ERROR",
+                            "message": e.toString(),
+                          });
+                          return {
+                            "ok": false,
+                            "reason": "NATIVE_ERROR",
+                            "message": e.toString(),
+                          };
                         }
+                      }
 
-                        await _showPaymentErrorDialog(
-                          title: "Unsupported Request",
-                          message:
-                              "Unknown command from web app: ${type ?? 'null'}",
-                          icon: Icons.help_outline,
-                        );
-                        return {
-                          "ok": false,
-                          "reason": "UNKNOWN_COMMAND",
-                          "type": type,
-                        };
-                      },
-                    );
-                  },
-                ),
+                      await _showPaymentErrorDialog(
+                        title: "Unsupported Request",
+                        message:
+                            "Unknown command from web app: ${type ?? 'null'}",
+                        icon: Icons.help_outline,
+                      );
+                      return {
+                        "ok": false,
+                        "reason": "UNKNOWN_COMMAND",
+                        "type": type,
+                      };
+                    },
+                  );
+                },
               ),
             ),
             _buildLoadingOverlay(),
