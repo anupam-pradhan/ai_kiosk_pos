@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="kiosk_orange">#FFC2410C</color>
+	<color name="ic_launcher_background">#c2410c</color>
 </resources>

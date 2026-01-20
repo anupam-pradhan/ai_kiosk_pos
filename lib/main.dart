@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'animated_splash.dart';
 
 class AppConfig {
   static String get appMode =>
@@ -47,9 +48,12 @@ class KioskApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: KioskWebView(),
+      home: AnimatedSplashScreen(
+        duration: const Duration(milliseconds: 2000),
+        child: const KioskWebView(),
+      ),
     );
   }
 }
@@ -525,14 +529,19 @@ class _KioskWebViewState extends State<KioskWebView>
                     handlerName: "kioskBridge",
                     callback: (args) async {
                       // Web calls: window.flutter_inappwebview.callHandler("kioskBridge", payload)
-                      final payload =
-                          (args.isNotEmpty) ? _safeMap(args[0]) : {};
+                      final payload = (args.isNotEmpty)
+                          ? _safeMap(args[0])
+                          : {};
 
                       final type = payload["type"];
 
                       // ✅ Health ping for debugging
                       if (type == "PING") {
-                        return {"ok": true, "pong": true, "platform": "flutter"};
+                        return {
+                          "ok": true,
+                          "pong": true,
+                          "platform": "flutter",
+                        };
                       }
 
                       // ✅ Tap-to-Pay entrypoint
@@ -588,7 +597,8 @@ class _KioskWebViewState extends State<KioskWebView>
                         if (hasMissing) {
                           await _showPaymentErrorDialog(
                             title: "Payment Error",
-                            message: "Payment request is missing required fields.",
+                            message:
+                                "Payment request is missing required fields.",
                           );
                           return {
                             "ok": false,
@@ -626,7 +636,9 @@ class _KioskWebViewState extends State<KioskWebView>
                             "data": nativeRes,
                           });
 
-                          await _showPaymentSuccessDialog("Payment successful.");
+                          await _showPaymentSuccessDialog(
+                            "Payment successful.",
+                          );
 
                           return {"ok": true, "data": nativeRes};
                         } on PlatformException catch (e) {
@@ -644,7 +656,8 @@ class _KioskWebViewState extends State<KioskWebView>
                           await _showPaymentErrorDialog(
                             title: "Payment Failed",
                             message:
-                                e.message ?? "Payment failed. Please try again.",
+                                e.message ??
+                                "Payment failed. Please try again.",
                           );
                           await _notifyWebStatus(errorPayload);
                           return {
