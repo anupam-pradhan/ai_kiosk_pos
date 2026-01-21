@@ -31,7 +31,7 @@ class AppConfig {
   static bool get isTapToPaySimulated {
     final raw =
         dotenv.env['TAP_TO_PAY_SIMULATED'] ??
-        const String.fromEnvironment('TAP_TO_PAY_SIMULATED');
+        const String.fromEnvironment('TAP_TO_PAY_SIMULATED', defaultValue: '');
     if (raw.isEmpty) return !isLive;
     return raw.toLowerCase() == 'true';
   }
@@ -39,7 +39,16 @@ class AppConfig {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: '.env');
+
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (e) {
+    // If .env file doesn't exist, continue with defaults
+    if (kDebugMode) {
+      print('Warning: .env file not found, using defaults');
+    }
+  }
+
   runApp(const KioskApp());
 }
 

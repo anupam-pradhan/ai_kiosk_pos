@@ -17,56 +17,105 @@ class AnimatedSplashScreen extends StatefulWidget {
 }
 
 class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _controller;
-  late Animation<double> _drawAnimation;
+  late AnimationController _shimmerController;
+  late Animation<double> _letterAnimation1;
+  late Animation<double> _letterAnimation2;
+  late Animation<double> _letterAnimation3;
+  late Animation<double> _letterAnimation4;
+  late Animation<double> _letterAnimation5;
+  late Animation<double> _letterAnimation6;
+  late Animation<double> _letterAnimation7;
   late Animation<double> _scaleAnimation;
   late Animation<double> _fadeAnimation;
-  late Animation<double> _textAnimation;
+  late Animation<double> _shimmerAnimation;
 
   @override
   void initState() {
     super.initState();
+
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 2200),
+      duration: const Duration(milliseconds: 2500),
       vsync: this,
     );
 
-    // Drawing animation (0.0 to 0.35) - letter draws in
-    _drawAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+    _shimmerController = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    );
+
+    // Each letter appears with a stagger effect
+    _letterAnimation1 = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.0, 0.35, curve: Curves.easeInOut),
+        curve: const Interval(0.0, 0.15, curve: Curves.elasticOut),
       ),
     );
 
-    // Text fade in animation (0.35 to 0.5)
-    _textAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+    _letterAnimation2 = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.35, 0.5, curve: Curves.easeIn),
+        curve: const Interval(0.08, 0.23, curve: Curves.elasticOut),
       ),
     );
 
-    // Scale animation (0.5 to 1.0) - Twitter-style zoom
+    _letterAnimation3 = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.16, 0.31, curve: Curves.elasticOut),
+      ),
+    );
+
+    _letterAnimation4 = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.24, 0.39, curve: Curves.elasticOut),
+      ),
+    );
+
+    _letterAnimation5 = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.32, 0.47, curve: Curves.elasticOut),
+      ),
+    );
+
+    _letterAnimation6 = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.40, 0.55, curve: Curves.elasticOut),
+      ),
+    );
+
+    _letterAnimation7 = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.48, 0.63, curve: Curves.elasticOut),
+      ),
+    );
+
+    // Shimmer animation
+    _shimmerAnimation = Tween<double>(begin: -1.0, end: 2.0).animate(
+      CurvedAnimation(parent: _shimmerController, curve: Curves.easeInOut),
+    );
+
+    // Scale animation - zoom out
     _scaleAnimation = TweenSequence<double>([
-      TweenSequenceItem(
-        tween: ConstantTween<double>(1.0),
-        weight: 50.0, // Wait during drawing and text
-      ),
+      TweenSequenceItem(tween: ConstantTween<double>(1.0), weight: 70.0),
       TweenSequenceItem(
         tween: Tween<double>(
           begin: 1.0,
           end: 1.05,
         ).chain(CurveTween(curve: Curves.easeOut)),
-        weight: 15.0,
+        weight: 10.0,
       ),
       TweenSequenceItem(
         tween: Tween<double>(
           begin: 1.05,
           end: 20.0,
         ).chain(CurveTween(curve: Curves.easeIn)),
-        weight: 35.0,
+        weight: 20.0,
       ),
     ]).animate(_controller);
 
@@ -74,11 +123,21 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
     _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.8, 1.0, curve: Curves.easeIn),
+        curve: const Interval(0.85, 1.0, curve: Curves.easeIn),
       ),
     );
 
-    _controller.forward().then((_) {
+    _controller.forward();
+
+    // Delay before starting shimmer to avoid flicker
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted && _controller.isCompleted) {
+        _shimmerController.forward();
+      }
+    });
+
+    // Navigate after animations complete
+    Future.delayed(const Duration(milliseconds: 3000), () {
       if (mounted) {
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
@@ -98,60 +157,145 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
   @override
   void dispose() {
     _controller.dispose();
+    _shimmerController.dispose();
     super.dispose();
+  }
+
+  Widget _buildLetter(String letter, Animation<double> animation) {
+    return Transform.scale(
+      scale: animation.value.clamp(0.0, 10.0),
+      child: Transform.translate(
+        offset: Offset(0, 30 * (1 - animation.value.clamp(0.0, 1.0))),
+        child: Opacity(
+          opacity: animation.value.clamp(0.0, 1.0),
+          child: ShaderMask(
+            shaderCallback: (bounds) {
+              return const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFFc2410c), // Dark orange
+                  Color(0xFF9a3412), // Darker orange
+                  Color(0xFF7c2d12), // Darkest orange
+                ],
+                stops: [0.0, 0.5, 1.0],
+              ).createShader(bounds);
+            },
+            child: Text(
+              letter,
+              style: TextStyle(
+                fontSize: 72,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                letterSpacing: -4,
+                height: 1.0,
+                fontFamily: 'SF Pro Display',
+                shadows: [
+                  Shadow(
+                    color: const Color(0xFFc2410c).withOpacity(0.5),
+                    offset: const Offset(0, 4),
+                    blurRadius: 8,
+                  ),
+                  const Shadow(
+                    color: Color(0x30000000),
+                    offset: Offset(0, 2),
+                    blurRadius: 4,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFc2410c),
+      backgroundColor: const Color(0xFFc2410c), // Match native splash #c2410c
       body: Center(
         child: AnimatedBuilder(
-          animation: _controller,
+          animation: Listenable.merge([_controller, _shimmerController]),
           builder: (context, child) {
+            final fadeValue = _fadeAnimation.value.clamp(0.0, 1.0);
+            final scaleValue = _scaleAnimation.value.clamp(0.0, 20.0);
+
             return Opacity(
-              opacity: _fadeAnimation.value,
+              opacity: fadeValue,
               child: Transform.scale(
-                scale: _scaleAnimation.value,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                scale: scaleValue,
+                child: Stack(
+                  alignment: Alignment.center,
                   children: [
+                    // Main container with clean design
                     Container(
-                      width: 160,
-                      height: 160,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 45,
+                        vertical: 30,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(40),
-                      ),
-                      child: CustomPaint(
-                        painter: MLogoPainter(_drawAnimation.value),
-                      ),
-                    ),
-                    const SizedBox(height: 30),
-                    Opacity(
-                      opacity: _textAnimation.value,
-                      child: Column(
-                        children: [
-                          const Text(
-                            'MegaPos Kiosk',
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              letterSpacing: 1.0,
-                            ),
+                        borderRadius: BorderRadius.circular(35),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.25),
+                            blurRadius: 40,
+                            offset: const Offset(0, 15),
+                            spreadRadius: -5,
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '🍔  🍕  🥤',
-                            style: TextStyle(
-                              fontSize: 20,
-                              color: Colors.white.withOpacity(0.9),
-                            ),
+                          BoxShadow(
+                            color: const Color(0xFFc2410c).withOpacity(0.2),
+                            blurRadius: 60,
+                            offset: const Offset(0, 25),
+                            spreadRadius: -10,
                           ),
                         ],
                       ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildLetter('M', _letterAnimation1),
+                          _buildLetter('E', _letterAnimation2),
+                          _buildLetter('G', _letterAnimation3),
+                          _buildLetter('A', _letterAnimation4),
+                          _buildLetter('P', _letterAnimation5),
+                          _buildLetter('O', _letterAnimation6),
+                          _buildLetter('S', _letterAnimation7),
+                        ],
+                      ),
                     ),
+                    // Shimmer effect overlay - only show when safe
+                    if (_controller.value > 0.7 &&
+                        _shimmerController.value > 0 &&
+                        _shimmerController.value < 1.0)
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(35),
+                          child: IgnorePointer(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment(
+                                    -1.0 + (_shimmerController.value * 3),
+                                    -1.0,
+                                  ),
+                                  end: Alignment(
+                                    -1.0 + (_shimmerController.value * 3) + 0.5,
+                                    1.0,
+                                  ),
+                                  colors: [
+                                    Colors.white.withOpacity(0.0),
+                                    Colors.white.withOpacity(0.4),
+                                    Colors.white.withOpacity(0.0),
+                                  ],
+                                  stops: const [0.0, 0.5, 1.0],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -160,81 +304,5 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
         ),
       ),
     );
-  }
-}
-
-// Custom painter to draw the M logo with animation
-class MLogoPainter extends CustomPainter {
-  final double progress;
-
-  MLogoPainter(this.progress);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Define M letter dimensions
-    final padding = size.width * 0.15;
-    final startX = padding;
-    final startY = size.height * 0.75;
-    final midX = size.width * 0.5;
-    final midY = size.height * 0.45;
-    final endX = size.width - padding;
-    final endY = size.height * 0.75;
-    final topY = size.height * 0.25;
-
-    // Create the M path
-    final path = Path();
-    path.moveTo(startX, startY);
-    path.lineTo(startX, topY);
-    path.lineTo(midX, midY);
-    path.lineTo(endX, topY);
-    path.lineTo(endX, endY);
-
-    if (progress < 1.0) {
-      // Drawing phase - stroke only
-      final strokePaint = Paint()
-        ..color = const Color(0xFFc2410c)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 10.0
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round;
-
-      final pathMetrics = path.computeMetrics();
-      final animatedPath = Path();
-
-      for (final metric in pathMetrics) {
-        final extractPath = metric.extractPath(0.0, metric.length * progress);
-        animatedPath.addPath(extractPath, Offset.zero);
-      }
-
-      canvas.drawPath(animatedPath, strokePaint);
-    } else {
-      // Completed phase - clean filled M
-      final fillPaint = Paint()
-        ..color = const Color(0xFFc2410c)
-        ..style = PaintingStyle.fill;
-
-      // Create closed path for clean fill
-      final fillPath = Path();
-      fillPath.moveTo(startX, startY);
-      fillPath.lineTo(startX, topY);
-      fillPath.lineTo(midX, midY);
-      fillPath.lineTo(endX, topY);
-      fillPath.lineTo(endX, endY);
-
-      // Close bottom to create filled shape
-      fillPath.lineTo(endX - 8, endY);
-      fillPath.lineTo(endX - 8, topY + 15);
-      fillPath.lineTo(midX, midY + 10);
-      fillPath.lineTo(startX + 8, topY + 15);
-      fillPath.lineTo(startX + 8, endY);
-      fillPath.close();
-
-      canvas.drawPath(fillPath, fillPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(MLogoPainter oldDelegate) {
-    return oldDelegate.progress != progress;
   }
 }
