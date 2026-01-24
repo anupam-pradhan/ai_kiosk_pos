@@ -38,14 +38,14 @@ class KioskModeCard extends StatelessWidget {
           children: [
             // Icon with colored background
             Container(
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: mode.color.withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
-              child: Icon(mode.icon, color: mode.color, size: 28),
+              child: Icon(mode.icon, color: mode.color, size: 32),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             // Title with consistent size
             Text(
               mode.title,
@@ -53,7 +53,7 @@ class KioskModeCard extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: 15,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.5,
                 height: 1.2,
@@ -68,7 +68,7 @@ class KioskModeCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.black54,
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: FontWeight.w500,
                 height: 1.2,
               ),
