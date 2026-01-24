@@ -271,7 +271,7 @@ class _KioskModeSelectionScreenState extends State<KioskModeSelectionScreen> {
   Widget _buildSkeletonView(double screenWidth) {
     return Column(
       children: [
-        const SizedBox(height: 8),
+        const Spacer(flex: 2),
         // Skeleton title
         _buildSkeletonBox(
           width: 160,
@@ -342,7 +342,7 @@ class _KioskModeSelectionScreenState extends State<KioskModeSelectionScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const Spacer(flex: 2),
       ],
     );
   }
