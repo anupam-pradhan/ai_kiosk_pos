@@ -30,7 +30,7 @@ class KioskApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'AI Kiosk POS',
+      title: 'MEGAPOS',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFC2410C)),
         useMaterial3: true,
