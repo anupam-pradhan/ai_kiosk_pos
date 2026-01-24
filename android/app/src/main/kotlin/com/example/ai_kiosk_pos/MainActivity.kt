@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -20,20 +22,25 @@ import io.flutter.plugin.common.MethodChannel
 import com.stripe.stripeterminal.Terminal
 import com.stripe.stripeterminal.external.callable.ConnectionTokenCallback
 import com.stripe.stripeterminal.external.callable.ConnectionTokenProvider
-import com.stripe.stripeterminal.external.callable.DiscoveryListener
 import com.stripe.stripeterminal.external.callable.PaymentIntentCallback
 import com.stripe.stripeterminal.external.callable.ReaderCallback
-import com.stripe.stripeterminal.external.callable.ReaderReconnectionListener
+import com.stripe.stripeterminal.external.callable.TapToPayReaderListener
 import com.stripe.stripeterminal.external.callable.TerminalListener
 import com.stripe.stripeterminal.external.callable.Cancelable
+import com.stripe.stripeterminal.external.models.CollectPaymentIntentConfiguration
 import com.stripe.stripeterminal.external.models.ConnectionConfiguration
 import com.stripe.stripeterminal.external.models.ConnectionTokenException
 import com.stripe.stripeterminal.external.models.ConnectionStatus
+import com.stripe.stripeterminal.external.models.ConfirmPaymentIntentConfiguration
 import com.stripe.stripeterminal.external.models.DiscoveryConfiguration
+import com.stripe.stripeterminal.external.models.EasyConnectConfiguration
+import com.stripe.stripeterminal.external.models.DisconnectReason
 import com.stripe.stripeterminal.external.models.PaymentIntent
 import com.stripe.stripeterminal.external.models.PaymentStatus
 import com.stripe.stripeterminal.external.models.Reader
+import com.stripe.stripeterminal.external.models.TerminalErrorCode
 import com.stripe.stripeterminal.external.models.TerminalException
+import com.stripe.stripeterminal.external.models.TapToPayUxConfiguration
 import com.stripe.stripeterminal.log.LogLevel
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -51,6 +58,27 @@ class MainActivity : FlutterActivity(), TerminalListener {
   private var terminalBaseUrl: String? = null
   private var pendingPermissionGranted: (() -> Unit)? = null
   private var pendingPermissionDenied: (() -> Unit)? = null
+  private val tapToPayReaderListener = object : TapToPayReaderListener {
+    override fun onDisconnect(reason: DisconnectReason) {
+      Log.w("KioskTerminal", "Tap to Pay reader disconnected: $reason")
+    }
+
+    override fun onReaderReconnectStarted(
+      reader: Reader,
+      cancelReconnect: Cancelable,
+      reason: DisconnectReason
+    ) {
+      Log.w("KioskTerminal", "Tap to Pay reader reconnecting: ${reader.serialNumber} ($reason)")
+    }
+
+    override fun onReaderReconnectSucceeded(reader: Reader) {
+      Log.i("KioskTerminal", "Tap to Pay reader reconnected: ${reader.serialNumber}")
+    }
+
+    override fun onReaderReconnectFailed(reader: Reader) {
+      Log.e("KioskTerminal", "Tap to Pay reader reconnect failed: ${reader.serialNumber}")
+    }
+  }
 
   private val locationPermissions = arrayOf(
     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -95,6 +123,15 @@ class MainActivity : FlutterActivity(), TerminalListener {
 
     pendingResult = result
 
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      finishWithError(
+        "UNSUPPORTED_OS",
+        "Tap to Pay requires Android 13 (API 33) or higher",
+        null
+      )
+      return
+    }
+
     val clientSecret = args["clientSecret"] as? String
     val orderId = args["orderId"] as? String
     val locationId = args["locationId"] as? String
@@ -122,7 +159,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
         },
         onError = { e ->
           val errorCode = if (
-            e.errorCode == TerminalException.TerminalErrorCode.LOCATION_SERVICES_DISABLED
+            e.errorCode == TerminalErrorCode.LOCATION_SERVICES_DISABLED
           ) {
             "LOCATION_SERVICES_DISABLED"
           } else {
@@ -137,17 +174,32 @@ class MainActivity : FlutterActivity(), TerminalListener {
   private fun ensureTerminalInitialized(baseUrl: String, onReady: () -> Unit) {
     try {
       if (!Terminal.isInitialized()) {
-        Terminal.initTerminal(
+        Terminal.init(
           applicationContext,
           LogLevel.VERBOSE,
           createTokenProvider(baseUrl),
-          this
+          this,
+          null
         )
       }
+      configureTapToPayUx()
       onReady()
     } catch (e: Exception) {
       finishWithError("INIT_FAILED", e.message ?: "Failed to initialize Terminal", e.toString())
     }
+  }
+
+  private fun configureTapToPayUx() {
+    val brandColor = Color.parseColor("#C2410C")
+    val colorScheme = TapToPayUxConfiguration.ColorScheme.Builder()
+      .primary(TapToPayUxConfiguration.Color.Value(brandColor))
+      .build()
+    val config = TapToPayUxConfiguration.Builder()
+      .tapZone(TapToPayUxConfiguration.TapZone.Default)
+      .darkMode(TapToPayUxConfiguration.DarkMode.SYSTEM)
+      .colors(colorScheme)
+      .build()
+    Terminal.getInstance().setTapToPayUxConfiguration(config)
   }
 
   private fun createTokenProvider(baseUrl: String): ConnectionTokenProvider {
@@ -205,50 +257,34 @@ class MainActivity : FlutterActivity(), TerminalListener {
         if (!isLocationServicesEnabled()) {
           onError(
             TerminalException(
-              TerminalException.TerminalErrorCode.LOCATION_SERVICES_DISABLED,
+              TerminalErrorCode.LOCATION_SERVICES_DISABLED,
               "Location services disabled. Please enable device location."
             )
           )
           return@ensureLocationPermission
         }
         resolveLocationId(locationId, onError) { resolvedLocationId ->
-          val config = DiscoveryConfiguration.LocalMobileDiscoveryConfiguration(
+          if (isConnectingReader.getAndSet(true)) return@resolveLocationId
+          val discoveryConfig = DiscoveryConfiguration.TapToPayDiscoveryConfiguration(
             isSimulated = isSimulated
           )
-          discoveryCancelable = terminal.discoverReaders(
+          val connectionConfig = ConnectionConfiguration.TapToPayConnectionConfiguration(
+            resolvedLocationId,
+            true,
+            tapToPayReaderListener
+          )
+          val config = EasyConnectConfiguration.TapToPayEasyConnectConfiguration(
+            discoveryConfig,
+            connectionConfig
+          )
+          discoveryCancelable = terminal.easyConnect(
             config,
-            object : DiscoveryListener {
-              override fun onUpdateDiscoveredReaders(readers: List<Reader>) {
-                if (readers.isEmpty()) return
-                if (isConnectingReader.getAndSet(true)) return
-                val reader = readers.first()
-                val connectionConfig = ConnectionConfiguration.LocalMobileConnectionConfiguration(
-                  resolvedLocationId,
-                  true,
-                  object : ReaderReconnectionListener {
-                    override fun onReaderReconnectSucceeded(reader: Reader) {}
-                    override fun onReaderReconnectFailed(reader: Reader) {}
-                  }
-                )
-                terminal.connectLocalMobileReader(
-                  reader,
-                  connectionConfig,
-                  object : ReaderCallback {
-                    override fun onSuccess(reader: Reader) {
-                      isConnectingReader.set(false)
-                      mainHandler.post { onConnected(reader) }
-                    }
-
-                    override fun onFailure(e: TerminalException) {
-                      isConnectingReader.set(false)
-                      mainHandler.post { onError(e) }
-                    }
-                  }
-                )
+            object : ReaderCallback {
+              override fun onSuccess(reader: Reader) {
+                isConnectingReader.set(false)
+                mainHandler.post { onConnected(reader) }
               }
-            },
-            object : com.stripe.stripeterminal.external.callable.Callback {
-              override fun onSuccess() {}
+
               override fun onFailure(e: TerminalException) {
                 isConnectingReader.set(false)
                 mainHandler.post { onError(e) }
@@ -260,7 +296,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
       onDenied = {
         onError(
           TerminalException(
-            TerminalException.TerminalErrorCode.LOCATION_SERVICES_DISABLED,
+            TerminalErrorCode.LOCATION_SERVICES_DISABLED,
             "Location permission required to discover readers"
           )
         )
@@ -280,7 +316,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
 
     onError(
       TerminalException(
-        TerminalException.TerminalErrorCode.MISSING_REQUIRED_PARAMETER,
+        TerminalErrorCode.MISSING_REQUIRED_PARAMETER,
         "Missing locationId for Tap to Pay"
       )
     )
@@ -292,34 +328,27 @@ class MainActivity : FlutterActivity(), TerminalListener {
       clientSecret,
       object : PaymentIntentCallback {
         override fun onSuccess(paymentIntent: PaymentIntent) {
-          terminal.collectPaymentMethod(
+          val collectConfig = CollectPaymentIntentConfiguration.Builder().build()
+          val confirmConfig = ConfirmPaymentIntentConfiguration.Builder().build()
+          terminal.processPaymentIntent(
             paymentIntent,
+            collectConfig,
+            confirmConfig,
             object : PaymentIntentCallback {
-              override fun onSuccess(collectedIntent: PaymentIntent) {
-                terminal.confirmPaymentIntent(
-                  collectedIntent,
-                  object : PaymentIntentCallback {
-                    override fun onSuccess(processedIntent: PaymentIntent) {
-                      finishWithSuccess(
-                        mapOf(
-                          "status" to "SUCCESS",
-                          "paymentIntentId" to processedIntent.id,
-                          "amount" to processedIntent.amount,
-                          "currency" to processedIntent.currency,
-                          "orderId" to orderId
-                        )
-                      )
-                    }
-
-                    override fun onFailure(e: TerminalException) {
-                      finishWithError("PROCESS_FAILED", e.errorMessage ?: "Process failed", e.toString())
-                    }
-                  }
+              override fun onSuccess(processedIntent: PaymentIntent) {
+                finishWithSuccess(
+                  mapOf(
+                    "status" to "SUCCESS",
+                    "paymentIntentId" to processedIntent.id,
+                    "amount" to processedIntent.amount,
+                    "currency" to processedIntent.currency,
+                    "orderId" to orderId
+                  )
                 )
               }
 
               override fun onFailure(e: TerminalException) {
-                finishWithError("COLLECT_FAILED", e.errorMessage ?: "Collect failed", e.toString())
+                finishWithError("PROCESS_FAILED", e.errorMessage ?: "Process failed", e.toString())
               }
             }
           )
@@ -485,7 +514,4 @@ class MainActivity : FlutterActivity(), TerminalListener {
     Log.d("KioskTerminal", "Payment status: $status")
   }
 
-  override fun onUnexpectedReaderDisconnect(reader: Reader) {
-    Log.w("KioskTerminal", "Reader disconnected: ${reader.serialNumber}")
-  }
 }

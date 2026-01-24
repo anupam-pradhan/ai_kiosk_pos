@@ -28,7 +28,7 @@ android {
         applicationId = "com.example.ai_kiosk_pos"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 26
+        minSdk = 33
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -57,6 +57,6 @@ flutter {
 }
 
 dependencies {
-    implementation("com.stripe:stripeterminal:3.5.0")
-    implementation("com.stripe:stripeterminal-localmobile:3.5.0")
+    implementation("com.stripe:stripeterminal-taptopay:5.1.1")
+    implementation("com.stripe:stripeterminal-core:5.1.1")
 }
