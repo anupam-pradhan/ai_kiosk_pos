@@ -161,7 +161,11 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
     super.dispose();
   }
 
-  Widget _buildLetter(String letter, Animation<double> animation) {
+  Widget _buildLetter(
+    String letter,
+    Animation<double> animation,
+    double fontSize,
+  ) {
     return Transform.scale(
       scale: animation.value.clamp(0.0, 10.0),
       child: Transform.translate(
@@ -184,10 +188,10 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
             child: Text(
               letter,
               style: TextStyle(
-                fontSize: 72,
+                fontSize: fontSize,
                 fontWeight: FontWeight.w900,
                 color: Colors.white,
-                letterSpacing: -4,
+                letterSpacing: fontSize > 60 ? -4 : -2,
                 height: 1.0,
                 fontFamily: 'SF Pro Display',
                 shadows: [
@@ -212,6 +216,13 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallDevice = screenWidth < 400;
+    final fontSize = isSmallDevice ? 48.0 : 72.0;
+    final horizontalPadding = isSmallDevice ? 20.0 : 45.0;
+    final verticalPadding = isSmallDevice ? 18.0 : 30.0;
+    final borderRadius = isSmallDevice ? 25.0 : 35.0;
+
     return Scaffold(
       backgroundColor: const Color(0xFFc2410c), // Match native splash #c2410c
       body: Center(
@@ -230,13 +241,13 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
                   children: [
                     // Main container with clean design
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 45,
-                        vertical: 30,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: horizontalPadding,
+                        vertical: verticalPadding,
                       ),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(35),
+                        borderRadius: BorderRadius.circular(borderRadius),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withOpacity(0.25),
@@ -255,13 +266,13 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _buildLetter('M', _letterAnimation1),
-                          _buildLetter('E', _letterAnimation2),
-                          _buildLetter('G', _letterAnimation3),
-                          _buildLetter('A', _letterAnimation4),
-                          _buildLetter('P', _letterAnimation5),
-                          _buildLetter('O', _letterAnimation6),
-                          _buildLetter('S', _letterAnimation7),
+                          _buildLetter('M', _letterAnimation1, fontSize),
+                          _buildLetter('E', _letterAnimation2, fontSize),
+                          _buildLetter('G', _letterAnimation3, fontSize),
+                          _buildLetter('A', _letterAnimation4, fontSize),
+                          _buildLetter('P', _letterAnimation5, fontSize),
+                          _buildLetter('O', _letterAnimation6, fontSize),
+                          _buildLetter('S', _letterAnimation7, fontSize),
                         ],
                       ),
                     ),
@@ -271,7 +282,7 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
                         _shimmerController.value < 1.0)
                       Positioned.fill(
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(35),
+                          borderRadius: BorderRadius.circular(borderRadius),
                           child: IgnorePointer(
                             child: Container(
                               decoration: BoxDecoration(
