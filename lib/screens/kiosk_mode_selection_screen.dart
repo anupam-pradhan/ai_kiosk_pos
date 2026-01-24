@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../config/app_config.dart';
 import '../models/kiosk_mode.dart';
@@ -5,12 +6,32 @@ import '../widgets/kiosk_mode_card.dart';
 import 'kiosk_webview_screen.dart';
 
 /// Screen that displays three kiosk mode options for the user to choose from
-class KioskModeSelectionScreen extends StatelessWidget {
+class KioskModeSelectionScreen extends StatefulWidget {
   const KioskModeSelectionScreen({super.key});
+
+  @override
+  State<KioskModeSelectionScreen> createState() =>
+      _KioskModeSelectionScreenState();
+}
+
+class _KioskModeSelectionScreenState extends State<KioskModeSelectionScreen> {
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Simulate loading delay for skeleton effect
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    });
+  }
 
   /// Brand colors used throughout the app
   static const brandColor = Color(0xFFC2410C);
-  static const brandDark = Color(0xFF7C2D12);
   static const brandLight = Color(0xFFFFF2E9);
 
   /// Navigate to the webview with the selected kiosk mode
@@ -86,136 +107,331 @@ class KioskModeSelectionScreen extends StatelessWidget {
           ),
           padding: EdgeInsets.symmetric(
             horizontal: screenWidth < 400 ? 16 : 24,
-            vertical: 12,
+            vertical: 8,
           ),
-          child: Column(
-            children: [
-              const Spacer(flex: 1),
-              // Title
-              Text(
-                'Choose Mode',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: screenWidth < 400 ? 20 : 24,
-                  fontWeight: FontWeight.w900,
-                  color: brandDark,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 6),
-              // Subtitle
-              const Text(
-                'Select your preferred mode',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.black54,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 20),
-              // Kiosk mode cards - centered with max size
-              Expanded(
-                flex: 5,
-                child: Center(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isNarrow = constraints.maxWidth < 700;
-                      // Limit max height and width for better proportions
-                      final maxWidth = isNarrow ? 400.0 : 800.0;
-                      final maxHeight = isNarrow ? 320.0 : 200.0;
-
-                      // 2x2 Grid layout for mobile
-                      if (isNarrow) {
-                        return ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: maxWidth,
-                            maxHeight: maxHeight,
+          child: _isLoading
+              ? _buildSkeletonView(screenWidth)
+              : Column(
+                  children: [
+                    const Spacer(flex: 2),
+                    // Title with elegant animation
+                    Center(
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0.0, end: 1.0),
+                        duration: const Duration(milliseconds: 600),
+                        curve: Curves.easeOut,
+                        builder: (context, value, child) {
+                          return Opacity(
+                            opacity: value,
+                            child: Transform.translate(
+                              offset: Offset(0, 20 * (1 - value)),
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: Text(
+                          'Choose Mode',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: screenWidth < 400 ? 24 : 28,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.5,
+                            color: const Color(0xFF1D1D1F),
                           ),
-                          child: Column(
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // Subtitle
+                    const Center(
+                      child: Text(
+                        'Select your preferred mode',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF6E6E73),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    // Kiosk mode cards - centered with max size
+                    Expanded(
+                      flex: 5,
+                      child: Center(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isNarrow = constraints.maxWidth < 700;
+                            // Limit max height and width for better proportions
+                            final maxWidth = isNarrow ? 400.0 : 800.0;
+                            final maxHeight = isNarrow ? 320.0 : 200.0;
+
+                            // 2x2 Grid layout for mobile
+                            if (isNarrow) {
+                              return ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxWidth: maxWidth,
+                                  maxHeight: maxHeight,
+                                ),
+                                child: Column(
+                                  children: [
+                                    Expanded(
+                                      child: Row(
+                                        children: [
+                                          KioskModeCard(
+                                            mode: kioskModes[0],
+                                            onTap: () => _openKioskMode(
+                                              context,
+                                              kioskModes[0],
+                                            ),
+                                            useExpanded: true,
+                                          ),
+                                          const SizedBox(width: 10),
+                                          KioskModeCard(
+                                            mode: kioskModes[1],
+                                            onTap: () => _openKioskMode(
+                                              context,
+                                              kioskModes[1],
+                                            ),
+                                            useExpanded: true,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 15),
+                                    Expanded(
+                                      child: Row(
+                                        children: [
+                                          KioskModeCard(
+                                            mode: kioskModes[2],
+                                            onTap: () => _openKioskMode(
+                                              context,
+                                              kioskModes[2],
+                                            ),
+                                            useExpanded: true,
+                                          ),
+                                          const SizedBox(width: 10),
+                                          KioskModeCard(
+                                            mode: kioskModes[3],
+                                            onTap: () => _openKioskMode(
+                                              context,
+                                              kioskModes[3],
+                                            ),
+                                            useExpanded: true,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            // Horizontal layout for wider screens
+                            return ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: maxWidth,
+                                maxHeight: maxHeight,
+                              ),
+                              child: Row(
+                                children: [
+                                  for (
+                                    int i = 0;
+                                    i < kioskModes.length;
+                                    i++
+                                  ) ...[
+                                    KioskModeCard(
+                                      mode: kioskModes[i],
+                                      onTap: () => _openKioskMode(
+                                        context,
+                                        kioskModes[i],
+                                      ),
+                                      useExpanded: true,
+                                    ),
+                                    if (i < kioskModes.length - 1)
+                                      const SizedBox(width: 12),
+                                  ],
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    const Spacer(flex: 2),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
+  /// Build skeleton loading view with elegant shimmer effect
+  Widget _buildSkeletonView(double screenWidth) {
+    return Column(
+      children: [
+        const SizedBox(height: 8),
+        // Skeleton title
+        _buildSkeletonBox(
+          width: 160,
+          height: screenWidth < 400 ? 24 : 28,
+          borderRadius: 8,
+        ),
+        const SizedBox(height: 6),
+        // Skeleton subtitle
+        _buildSkeletonBox(width: 180, height: 12, borderRadius: 6),
+        const SizedBox(height: 10),
+        // Skeleton cards
+        Expanded(
+          flex: 5,
+          child: Center(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isNarrow = constraints.maxWidth < 700;
+                final maxWidth = isNarrow ? 400.0 : 800.0;
+                final maxHeight = isNarrow ? 320.0 : 200.0;
+
+                if (isNarrow) {
+                  return ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: maxWidth,
+                      maxHeight: maxHeight,
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: Row(
                             children: [
-                              Expanded(
-                                child: Row(
-                                  children: [
-                                    KioskModeCard(
-                                      mode: kioskModes[0],
-                                      onTap: () => _openKioskMode(
-                                        context,
-                                        kioskModes[0],
-                                      ),
-                                      useExpanded: true,
-                                    ),
-                                    const SizedBox(width: 10),
-                                    KioskModeCard(
-                                      mode: kioskModes[1],
-                                      onTap: () => _openKioskMode(
-                                        context,
-                                        kioskModes[1],
-                                      ),
-                                      useExpanded: true,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              Expanded(
-                                child: Row(
-                                  children: [
-                                    KioskModeCard(
-                                      mode: kioskModes[2],
-                                      onTap: () => _openKioskMode(
-                                        context,
-                                        kioskModes[2],
-                                      ),
-                                      useExpanded: true,
-                                    ),
-                                    const SizedBox(width: 10),
-                                    KioskModeCard(
-                                      mode: kioskModes[3],
-                                      onTap: () => _openKioskMode(
-                                        context,
-                                        kioskModes[3],
-                                      ),
-                                      useExpanded: true,
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              Expanded(child: _buildSkeletonCard()),
+                              const SizedBox(width: 10),
+                              Expanded(child: _buildSkeletonCard()),
                             ],
                           ),
-                        );
-                      }
-
-                      // Horizontal layout for wider screens
-                      return ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: maxWidth,
-                          maxHeight: maxHeight,
                         ),
-                        child: Row(
-                          children: [
-                            for (int i = 0; i < kioskModes.length; i++) ...[
-                              KioskModeCard(
-                                mode: kioskModes[i],
-                                onTap: () =>
-                                    _openKioskMode(context, kioskModes[i]),
-                                useExpanded: true,
-                              ),
-                              if (i < kioskModes.length - 1)
-                                const SizedBox(width: 12),
+                        const SizedBox(height: 15),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Expanded(child: _buildSkeletonCard()),
+                              const SizedBox(width: 10),
+                              Expanded(child: _buildSkeletonCard()),
                             ],
-                          ],
+                          ),
                         ),
-                      );
-                    },
+                      ],
+                    ),
+                  );
+                }
+
+                return ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: maxWidth,
+                    maxHeight: maxHeight,
                   ),
-                ),
-              ),
-              const Spacer(flex: 1),
+                  child: Row(
+                    children: [
+                      for (int i = 0; i < 4; i++) ...[
+                        Expanded(child: _buildSkeletonCard()),
+                        if (i < 3) const SizedBox(width: 12),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  /// Build a skeleton card with glassmorphism and shimmer
+  Widget _buildSkeletonCard() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Colors.white.withOpacity(0.9),
+                Colors.white.withOpacity(0.7),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.8),
+              width: 1.5,
+            ),
+          ),
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildSkeletonBox(width: 72, height: 72, isCircle: true),
+              const SizedBox(height: 14),
+              _buildSkeletonBox(width: 90, height: 16, borderRadius: 6),
+              const SizedBox(height: 6),
+              _buildSkeletonBox(width: 110, height: 12, borderRadius: 5),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  /// Build a skeleton box with smooth shimmer animation
+  Widget _buildSkeletonBox({
+    required double width,
+    required double height,
+    bool isCircle = false,
+    double borderRadius = 8,
+  }) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 1200),
+      curve: Curves.easeInOut,
+      builder: (context, value, child) {
+        final shimmerValue = (value * 2).clamp(0.0, 1.0);
+        final opacity = shimmerValue < 0.5
+            ? 0.15 + (shimmerValue * 0.15)
+            : 0.3 - ((shimmerValue - 0.5) * 0.15);
+
+        return Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                brandColor.withOpacity(opacity),
+                brandColor.withOpacity(opacity + 0.08),
+                brandColor.withOpacity(opacity),
+              ],
+              stops: const [0.0, 0.5, 1.0],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              transform: GradientRotation(value * 6.28), // Full rotation
+            ),
+            borderRadius: isCircle ? null : BorderRadius.circular(borderRadius),
+            shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+            boxShadow: [
+              BoxShadow(
+                color: brandColor.withOpacity(0.05),
+                blurRadius: 8,
+                spreadRadius: -2,
+              ),
+            ],
+          ),
+        );
+      },
+      onEnd: () {
+        if (mounted) setState(() {});
+      },
     );
   }
 }

@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-// ignore: unused_import
-import 'dart:ui' as ui;
 
 class AnimatedSplashScreen extends StatefulWidget {
   final Widget child;
@@ -18,108 +16,51 @@ class AnimatedSplashScreen extends StatefulWidget {
 
 class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
     with TickerProviderStateMixin {
-  late AnimationController _controller;
-  late AnimationController _shimmerController;
-  late Animation<double> _letterAnimation1;
-  late Animation<double> _letterAnimation2;
-  late Animation<double> _letterAnimation3;
-  late Animation<double> _letterAnimation4;
-  late Animation<double> _letterAnimation5;
-  late Animation<double> _letterAnimation6;
-  late Animation<double> _letterAnimation7;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _shimmerAnimation;
+  late final AnimationController _controller;
+  late final Animation<double> _scaleAnimation;
+  late final Animation<double> _fadeAnimation;
+  late final Animation<double> _sweepAnimation;
+  late final List<Animation<double>> _letterAnimations;
 
   @override
   void initState() {
     super.initState();
 
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 2500),
+      duration: const Duration(milliseconds: 2300),
       vsync: this,
     );
 
-    _shimmerController = AnimationController(
-      duration: const Duration(milliseconds: 1200),
-      vsync: this,
-    );
-
-    // Each letter appears with a stagger effect
-    _letterAnimation1 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
+    _letterAnimations = List.generate(7, (index) {
+      final start = 0.08 + (index * 0.06);
+      final end = start + 0.26;
+      return CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.0, 0.15, curve: Curves.elasticOut),
-      ),
+        curve: Interval(start, end, curve: Curves.easeOutCubic),
+      );
+    });
+
+    _sweepAnimation = Tween<double>(begin: -1.2, end: 1.2).animate(
+      CurvedAnimation(parent: _controller, curve: const Interval(0.45, 0.9)),
     );
 
-    _letterAnimation2 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.08, 0.23, curve: Curves.elasticOut),
-      ),
-    );
-
-    _letterAnimation3 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.16, 0.31, curve: Curves.elasticOut),
-      ),
-    );
-
-    _letterAnimation4 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.24, 0.39, curve: Curves.elasticOut),
-      ),
-    );
-
-    _letterAnimation5 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.32, 0.47, curve: Curves.elasticOut),
-      ),
-    );
-
-    _letterAnimation6 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.40, 0.55, curve: Curves.elasticOut),
-      ),
-    );
-
-    _letterAnimation7 = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.48, 0.63, curve: Curves.elasticOut),
-      ),
-    );
-
-    // Shimmer animation
-    _shimmerAnimation = Tween<double>(begin: -1.0, end: 2.0).animate(
-      CurvedAnimation(parent: _shimmerController, curve: Curves.easeInOut),
-    );
-
-    // Scale animation - zoom out
     _scaleAnimation = TweenSequence<double>([
-      TweenSequenceItem(tween: ConstantTween<double>(1.0), weight: 70.0),
+      TweenSequenceItem(
+        tween: Tween<double>(
+          begin: 0.92,
+          end: 1.0,
+        ).chain(CurveTween(curve: Curves.easeOut)),
+        weight: 50,
+      ),
       TweenSequenceItem(
         tween: Tween<double>(
           begin: 1.0,
           end: 1.05,
-        ).chain(CurveTween(curve: Curves.easeOut)),
-        weight: 10.0,
-      ),
-      TweenSequenceItem(
-        tween: Tween<double>(
-          begin: 1.05,
-          end: 20.0,
         ).chain(CurveTween(curve: Curves.easeIn)),
-        weight: 20.0,
+        weight: 50,
       ),
     ]).animate(_controller);
 
-    // Fade out at the end
     _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(
         parent: _controller,
@@ -129,84 +70,64 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
 
     _controller.forward();
 
-    // Delay before starting shimmer to avoid flicker
-    Future.delayed(const Duration(milliseconds: 1800), () {
-      if (mounted && _controller.isCompleted) {
-        _shimmerController.forward();
-      }
-    });
-
-    // Navigate after animations complete
-    Future.delayed(const Duration(milliseconds: 3000), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) =>
-                widget.child,
-            transitionsBuilder:
-                (context, animation, secondaryAnimation, child) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-            transitionDuration: const Duration(milliseconds: 300),
-          ),
-        );
-      }
+    Future.delayed(const Duration(milliseconds: 2400), () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => widget.child,
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          transitionDuration: const Duration(milliseconds: 320),
+        ),
+      );
     });
   }
 
   @override
   void dispose() {
     _controller.dispose();
-    _shimmerController.dispose();
     super.dispose();
   }
 
   Widget _buildLetter(
     String letter,
     Animation<double> animation,
-    double fontSize,
+    double size,
+    double letterSpacing,
   ) {
-    return Transform.scale(
-      scale: animation.value.clamp(0.0, 10.0),
+    final value = animation.value.clamp(0.0, 1.0);
+    return Opacity(
+      opacity: value,
       child: Transform.translate(
-        offset: Offset(0, 30 * (1 - animation.value.clamp(0.0, 1.0))),
-        child: Opacity(
-          opacity: animation.value.clamp(0.0, 1.0),
-          child: ShaderMask(
-            shaderCallback: (bounds) {
-              return const LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFFc2410c), // Dark orange
-                  Color(0xFF9a3412), // Darker orange
-                  Color(0xFF7c2d12), // Darkest orange
-                ],
-                stops: [0.0, 0.5, 1.0],
-              ).createShader(bounds);
-            },
-            child: Text(
-              letter,
-              style: TextStyle(
-                fontSize: fontSize,
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
-                letterSpacing: fontSize > 60 ? -4 : -2,
-                height: 1.0,
-                fontFamily: 'SF Pro Display',
-                shadows: [
-                  Shadow(
-                    color: const Color(0xFFc2410c).withOpacity(0.5),
-                    offset: const Offset(0, 4),
-                    blurRadius: 8,
-                  ),
-                  const Shadow(
-                    color: Color(0x30000000),
-                    offset: Offset(0, 2),
-                    blurRadius: 4,
-                  ),
-                ],
-              ),
+        offset: Offset(0, 24 * (1 - value)),
+        child: ShaderMask(
+          shaderCallback: (bounds) {
+            return const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFFFFFFFF), Color(0xFFFFE2D4), Color(0xFFFFC3A8)],
+            ).createShader(bounds);
+          },
+          child: Text(
+            letter,
+            style: TextStyle(
+              fontSize: size,
+              fontWeight: FontWeight.w900,
+              letterSpacing: letterSpacing,
+              color: Colors.white,
+              shadows: [
+                const Shadow(
+                  color: Color(0x66000000),
+                  offset: Offset(0, 6),
+                  blurRadius: 16,
+                ),
+                Shadow(
+                  color: const Color(0xFF9A3412).withOpacity(0.6),
+                  offset: const Offset(0, 0),
+                  blurRadius: 24,
+                ),
+              ],
             ),
           ),
         ),
@@ -214,105 +135,165 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen>
     );
   }
 
+  Widget _buildSweepText(String text, double size, double letterSpacing) {
+    return ShaderMask(
+      blendMode: BlendMode.srcATop,
+      shaderCallback: (bounds) {
+        final start = _sweepAnimation.value;
+        return LinearGradient(
+          begin: Alignment(start, -1),
+          end: Alignment(start + 0.7, 1),
+          colors: [
+            Colors.transparent,
+            Colors.white.withOpacity(0.8),
+            Colors.transparent,
+          ],
+          stops: const [0.2, 0.5, 0.8],
+        ).createShader(bounds);
+      },
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: size,
+          fontWeight: FontWeight.w900,
+          letterSpacing: letterSpacing,
+          color: const Color(0xFFFFEDE3),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isSmallDevice = screenWidth < 400;
-    final fontSize = isSmallDevice ? 48.0 : 72.0;
-    final horizontalPadding = isSmallDevice ? 20.0 : 45.0;
-    final verticalPadding = isSmallDevice ? 18.0 : 30.0;
-    final borderRadius = isSmallDevice ? 25.0 : 35.0;
-
     return Scaffold(
-      backgroundColor: const Color(0xFFc2410c), // Match native splash #c2410c
-      body: Center(
-        child: AnimatedBuilder(
-          animation: Listenable.merge([_controller, _shimmerController]),
-          builder: (context, child) {
-            final fadeValue = _fadeAnimation.value.clamp(0.0, 1.0);
-            final scaleValue = _scaleAnimation.value.clamp(0.0, 20.0);
+      backgroundColor: const Color(0xFFC2410C),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = constraints.biggest;
+          final shortest = size.shortestSide;
+          final fontSize = (shortest * 0.18).clamp(42.0, 84.0);
+          final letterSpacing = (shortest * 0.0035).clamp(0.6, 1.6);
+          final underlineWidth = (shortest * 0.5).clamp(160.0, 260.0);
 
-            return Opacity(
-              opacity: fadeValue,
-              child: Transform.scale(
-                scale: scaleValue,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Main container with clean design
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: horizontalPadding,
-                        vertical: verticalPadding,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(borderRadius),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.25),
-                            blurRadius: 40,
-                            offset: const Offset(0, 15),
-                            spreadRadius: -5,
-                          ),
-                          BoxShadow(
-                            color: const Color(0xFFc2410c).withOpacity(0.2),
-                            blurRadius: 60,
-                            offset: const Offset(0, 25),
-                            spreadRadius: -10,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildLetter('M', _letterAnimation1, fontSize),
-                          _buildLetter('E', _letterAnimation2, fontSize),
-                          _buildLetter('G', _letterAnimation3, fontSize),
-                          _buildLetter('A', _letterAnimation4, fontSize),
-                          _buildLetter('P', _letterAnimation5, fontSize),
-                          _buildLetter('O', _letterAnimation6, fontSize),
-                          _buildLetter('S', _letterAnimation7, fontSize),
-                        ],
-                      ),
-                    ),
-                    // Shimmer effect overlay - only show when safe
-                    if (_controller.value > 0.7 &&
-                        _shimmerController.value > 0 &&
-                        _shimmerController.value < 1.0)
+          return AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              return Opacity(
+                opacity: _fadeAnimation.value,
+                child: Transform.scale(
+                  scale: _scaleAnimation.value,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
                       Positioned.fill(
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(borderRadius),
-                          child: IgnorePointer(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment(
-                                    -1.0 + (_shimmerController.value * 3),
-                                    -1.0,
-                                  ),
-                                  end: Alignment(
-                                    -1.0 + (_shimmerController.value * 3) + 0.5,
-                                    1.0,
-                                  ),
-                                  colors: [
-                                    Colors.white.withOpacity(0.0),
-                                    Colors.white.withOpacity(0.4),
-                                    Colors.white.withOpacity(0.0),
-                                  ],
-                                  stops: const [0.0, 0.5, 1.0],
-                                ),
-                              ),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: RadialGradient(
+                              colors: [
+                                const Color(0xFFFF6A2E).withOpacity(0.25),
+                                const Color(0xFFC2410C),
+                              ],
+                              radius: 1.0,
+                              center: const Alignment(0.0, -0.2),
                             ),
                           ),
                         ),
                       ),
-                  ],
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _buildLetter(
+                                      'M',
+                                      _letterAnimations[0],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                    _buildLetter(
+                                      'E',
+                                      _letterAnimations[1],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                    _buildLetter(
+                                      'G',
+                                      _letterAnimations[2],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                    _buildLetter(
+                                      'A',
+                                      _letterAnimations[3],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                    _buildLetter(
+                                      'P',
+                                      _letterAnimations[4],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                    _buildLetter(
+                                      'O',
+                                      _letterAnimations[5],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                    _buildLetter(
+                                      'S',
+                                      _letterAnimations[6],
+                                      fontSize,
+                                      letterSpacing,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              SizedBox(height: shortest * 0.02),
+                              Container(
+                                height: 2,
+                                width: underlineWidth,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFFFFFF),
+                                  borderRadius: BorderRadius.circular(2),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(
+                                        0xFFFFFFFF,
+                                      ).withOpacity(0.35),
+                                      blurRadius: 18,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      IgnorePointer(
+                        child: Opacity(
+                          opacity: 0.7,
+                          child: _buildSweepText(
+                            'MEGAPOS',
+                            fontSize,
+                            letterSpacing,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
-        ),
+              );
+            },
+          );
+        },
       ),
     );
   }

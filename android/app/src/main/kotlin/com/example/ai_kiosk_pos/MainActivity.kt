@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -190,14 +189,9 @@ class MainActivity : FlutterActivity(), TerminalListener {
   }
 
   private fun configureTapToPayUx() {
-    val brandColor = Color.parseColor("#C2410C")
-    val colorScheme = TapToPayUxConfiguration.ColorScheme.Builder()
-      .primary(TapToPayUxConfiguration.Color.Value(brandColor))
-      .build()
     val config = TapToPayUxConfiguration.Builder()
       .tapZone(TapToPayUxConfiguration.TapZone.Default)
       .darkMode(TapToPayUxConfiguration.DarkMode.SYSTEM)
-      .colors(colorScheme)
       .build()
     Terminal.getInstance().setTapToPayUxConfiguration(config)
   }
