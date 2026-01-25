@@ -39,7 +39,6 @@ import com.stripe.stripeterminal.external.models.PaymentStatus
 import com.stripe.stripeterminal.external.models.Reader
 import com.stripe.stripeterminal.external.models.TerminalErrorCode
 import com.stripe.stripeterminal.external.models.TerminalException
-import com.stripe.stripeterminal.external.models.TapToPayUxConfiguration
 import com.stripe.stripeterminal.log.LogLevel
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -181,19 +180,10 @@ class MainActivity : FlutterActivity(), TerminalListener {
           null
         )
       }
-      configureTapToPayUx()
       onReady()
     } catch (e: Exception) {
       finishWithError("INIT_FAILED", e.message ?: "Failed to initialize Terminal", e.toString())
     }
-  }
-
-  private fun configureTapToPayUx() {
-    val config = TapToPayUxConfiguration.Builder()
-      .tapZone(TapToPayUxConfiguration.TapZone.Default)
-      .darkMode(TapToPayUxConfiguration.DarkMode.SYSTEM)
-      .build()
-    Terminal.getInstance().setTapToPayUxConfiguration(config)
   }
 
   private fun createTokenProvider(baseUrl: String): ConnectionTokenProvider {
