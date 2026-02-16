@@ -85,6 +85,26 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     );
   }
 
+  Future<void> _injectWebViewFixes(InAppWebViewController controller) async {
+    const js = r'''
+(function () {
+  if (document.getElementById('kiosk-app-fixes')) return;
+  const style = document.createElement('style');
+  style.id = 'kiosk-app-fixes';
+  style.textContent = `
+    .safe-top {
+      padding-top: 0 !important;
+      min-height: 73px !important;
+      height: auto !important;
+      overflow: visible !important;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+''';
+    await controller.evaluateJavascript(source: js);
+  }
+
   Future<Map<String, dynamic>> _getNfcStatus() async {
     if (defaultTargetPlatform != TargetPlatform.android) {
       return {"supported": true, "enabled": true};
@@ -431,6 +451,7 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                     _showWebView = true;
                   });
                   _checkNfcOnStartup();
+                  _injectWebViewFixes(controller);
                 },
                 onReceivedError: (controller, request, error) async {
                   if (!mounted) return;
