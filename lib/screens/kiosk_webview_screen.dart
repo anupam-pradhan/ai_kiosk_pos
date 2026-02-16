@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -19,6 +20,7 @@ class KioskWebViewScreen extends StatefulWidget {
 
 class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     with WidgetsBindingObserver {
+  static const Duration _tapToPayTimeout = Duration(seconds: 120);
   late final String kioskUrl = widget.kioskUrl;
 
   // Dart -> Native Android bridge
@@ -515,6 +517,18 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
 
                       // Tap-to-Pay entrypoint
                       if (type == "START_TAP_TO_PAY") {
+                        if (_isPaymentProcessing) {
+                          final busyPayload = {
+                            "ok": false,
+                            "type": "PAYMENT_RESULT",
+                            "reason": "BUSY",
+                            "code": "PAYMENT_ALREADY_IN_PROGRESS",
+                            "message": "A payment is already in progress.",
+                          };
+                          await _notifyWebStatus(busyPayload);
+                          return busyPayload;
+                        }
+
                         final nfcStatus = await _getNfcStatus();
                         final nfcSupported = nfcStatus["supported"] == true;
                         final nfcEnabled = nfcStatus["enabled"] == true;
@@ -590,11 +604,8 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                                 "terminalBaseUrl": terminalBaseUrl,
                                 "locationId": locationId,
                                 "isSimulated": AppConfig.isTapToPaySimulated,
-                              });
-
-                          if (mounted) {
-                            setState(() => _isPaymentProcessing = false);
-                          }
+                              })
+                              .timeout(_tapToPayTimeout);
 
                           await _notifyWebStatus({
                             "ok": true,
@@ -607,10 +618,22 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                           );
 
                           return {"ok": true, "data": nativeRes};
+                        } on TimeoutException {
+                          await _showPaymentErrorDialog(
+                            title: "Payment Timed Out",
+                            message:
+                                "Payment took too long. Please verify payment status and try again.",
+                          );
+                          final errorPayload = {
+                            "ok": false,
+                            "type": "PAYMENT_RESULT",
+                            "reason": "TIMEOUT",
+                            "code": "NATIVE_TIMEOUT",
+                            "message": "Native payment request timed out.",
+                          };
+                          await _notifyWebStatus(errorPayload);
+                          return errorPayload;
                         } on PlatformException catch (e) {
-                          if (mounted) {
-                            setState(() => _isPaymentProcessing = false);
-                          }
                           final errorPayload = {
                             "ok": false,
                             "type": "PAYMENT_RESULT",
@@ -634,9 +657,6 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                             "details": e.details,
                           };
                         } catch (e) {
-                          if (mounted) {
-                            setState(() => _isPaymentProcessing = false);
-                          }
                           await _showPaymentErrorDialog(
                             title: "Payment Failed",
                             message: "Payment failed. ${e.toString()}",
@@ -652,6 +672,10 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                             "reason": "NATIVE_ERROR",
                             "message": e.toString(),
                           };
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isPaymentProcessing = false);
+                          }
                         }
                       }
 
