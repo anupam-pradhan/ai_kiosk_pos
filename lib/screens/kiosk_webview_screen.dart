@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -19,6 +20,7 @@ class KioskWebViewScreen extends StatefulWidget {
 
 class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     with WidgetsBindingObserver {
+  static const Duration _tapToPayTimeout = Duration(seconds: 120);
   late final String kioskUrl = widget.kioskUrl;
 
   // Dart -> Native Android bridge
@@ -38,6 +40,25 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
   String _pageLoadErrorMessage = '';
   bool _showWebView = true;
   bool _nfcResumeCheckInFlight = false;
+
+  static const Set<String> _fallbackEligibleCodes = {
+    "UNSUPPORTED_OS",
+    "UNSUPPORTED_DEVICE",
+    "NFC_UNSUPPORTED",
+    "NFC_DISABLED",
+    "LOCATION_SERVICES_DISABLED",
+    "TAP_TO_PAY_INSECURE_ENVIRONMENT",
+    "READER_ERROR",
+    "CONTACTLESS_TRANSACTION_FAILED",
+    "PROCESS_FAILED",
+    "RETRIEVE_FAILED",
+    "INIT_FAILED",
+    "INVALID_ARGUMENTS",
+    "BASE_URL_CHANGED",
+    "PAYMENT_ALREADY_IN_PROGRESS",
+    "BUSY",
+    "PAYMENT_TIMEOUT",
+  };
 
   @override
   void initState() {
@@ -83,6 +104,31 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
       source:
           "window.onNativePaymentStatus && window.onNativePaymentStatus($jsonPayload);",
     );
+  }
+
+  Map<String, dynamic> _buildFallbackPayload({
+    required String code,
+    required String reason,
+    String? message,
+    dynamic details,
+  }) {
+    return {
+      "ok": false,
+      "type": "PAYMENT_RESULT",
+      "reason": reason,
+      "code": code,
+      "errorCode": code,
+      "message": message,
+      "details": details,
+      "canFallbackToCard": true,
+      "fallbackAction": "USE_EXISTING_CARD_FLOW",
+      "exitFlow": true,
+    };
+  }
+
+  String _normalizeCode(dynamic code) {
+    if (code == null) return "";
+    return code.toString().trim().toUpperCase();
   }
 
   Future<void> _injectWebViewFixes(InAppWebViewController controller) async {
@@ -140,6 +186,9 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
         "code": "NFC_UNSUPPORTED",
         "errorCode": "NFC_UNSUPPORTED",
         "reason": "NFC_UNSUPPORTED",
+        "canFallbackToCard": true,
+        "fallbackAction": "USE_EXISTING_CARD_FLOW",
+        "exitFlow": true,
       });
       return;
     }
@@ -162,6 +211,9 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
           "code": "NFC_UNSUPPORTED",
           "errorCode": "NFC_UNSUPPORTED",
           "reason": "NFC_UNSUPPORTED",
+          "canFallbackToCard": true,
+          "fallbackAction": "USE_EXISTING_CARD_FLOW",
+          "exitFlow": true,
         });
         return;
       }
@@ -515,28 +567,37 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
 
                       // Tap-to-Pay entrypoint
                       if (type == "START_TAP_TO_PAY") {
+                        if (_isPaymentProcessing) {
+                          final busyPayload = _buildFallbackPayload(
+                            code: "PAYMENT_ALREADY_IN_PROGRESS",
+                            reason: "BUSY",
+                            message: "A payment is already in progress.",
+                          );
+                          await _notifyWebStatus(busyPayload);
+                          return busyPayload;
+                        }
+
                         final nfcStatus = await _getNfcStatus();
                         final nfcSupported = nfcStatus["supported"] == true;
                         final nfcEnabled = nfcStatus["enabled"] == true;
                         if (!nfcSupported) {
-                          final errorPayload = {
-                            "ok": false,
-                            "type": "PAYMENT_RESULT",
-                            "code": "NFC_UNSUPPORTED",
-                            "errorCode": "NFC_UNSUPPORTED",
-                            "reason": "NFC_UNSUPPORTED",
-                          };
+                          final errorPayload = _buildFallbackPayload(
+                            code: "NFC_UNSUPPORTED",
+                            reason: "NFC_UNSUPPORTED",
+                            message:
+                                "This device does not support NFC Tap to Pay.",
+                          );
                           await _notifyWebStatus(errorPayload);
                           return errorPayload;
                         }
                         if (!nfcEnabled) {
-                          final errorPayload = {
-                            "ok": false,
-                            "type": "PAYMENT_RESULT",
-                            "code": "NFC_DISABLED",
-                            "errorCode": "NFC_DISABLED",
-                            "reason": "NFC_DISABLED",
-                          };
+                          await _showNfcDisabledDialog();
+                          final errorPayload = _buildFallbackPayload(
+                            code: "NFC_DISABLED",
+                            reason: "NFC_DISABLED",
+                            message:
+                                "NFC is disabled. Enable NFC to use Tap to Pay.",
+                          );
                           await _notifyWebStatus(errorPayload);
                           return errorPayload;
                         }
@@ -590,11 +651,8 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                                 "terminalBaseUrl": terminalBaseUrl,
                                 "locationId": locationId,
                                 "isSimulated": AppConfig.isTapToPaySimulated,
-                              });
-
-                          if (mounted) {
-                            setState(() => _isPaymentProcessing = false);
-                          }
+                              })
+                              .timeout(_tapToPayTimeout);
 
                           await _notifyWebStatus({
                             "ok": true,
@@ -607,32 +665,76 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                           );
 
                           return {"ok": true, "data": nativeRes};
-                        } on PlatformException catch (e) {
-                          if (mounted) {
-                            setState(() => _isPaymentProcessing = false);
-                          }
-                          final errorPayload = {
-                            "ok": false,
-                            "type": "PAYMENT_RESULT",
-                            "reason": "NATIVE_ERROR",
-                            "code": e.code,
-                            "message": e.message,
-                            "details": e.details,
-                          };
-                          await _showPaymentErrorDialog(
-                            title: "Payment Failed",
+                        } on TimeoutException {
+                          final timeoutPayload = _buildFallbackPayload(
+                            code: "PAYMENT_TIMEOUT",
+                            reason: "TIMEOUT",
                             message:
-                                e.message ??
-                                "Payment failed. Please try again.",
+                                "Tap to Pay timed out. Continue with card flow.",
                           );
+                          await _notifyWebStatus(timeoutPayload);
+                          return timeoutPayload;
+                        } on PlatformException catch (e) {
+                          final normalizedCode = _normalizeCode(e.code);
+
+                          // Handle device capability issues (NFC not supported/disabled)
+                          if (normalizedCode == "NFC_UNSUPPORTED" ||
+                              normalizedCode == "NFC_DISABLED") {
+                            await _notifyWebStatus({
+                              "ok": false,
+                              "type": "DEVICE_CAPABILITY",
+                              "code": normalizedCode,
+                              "errorCode": normalizedCode,
+                              "reason": normalizedCode,
+                              "message": e.message ?? "NFC not available",
+                            });
+                            if (mounted) {
+                              setState(() => _isPaymentProcessing = false);
+                            }
+                            return {
+                              "ok": false,
+                              "type": "DEVICE_CAPABILITY",
+                              "code": normalizedCode,
+                              "reason": normalizedCode,
+                            };
+                          }
+
+                          final isFallbackCase = _fallbackEligibleCodes
+                              .contains(normalizedCode);
+                          final errorPayload = isFallbackCase
+                              ? _buildFallbackPayload(
+                                  code: normalizedCode.isEmpty
+                                      ? "NATIVE_ERROR"
+                                      : normalizedCode,
+                                  reason: normalizedCode.isEmpty
+                                      ? "NATIVE_ERROR"
+                                      : normalizedCode,
+                                  message:
+                                      e.message ??
+                                      "Tap to Pay unavailable. Use card flow.",
+                                  details: e.details,
+                                )
+                              : {
+                                  "ok": false,
+                                  "type": "PAYMENT_RESULT",
+                                  "reason": "NATIVE_ERROR",
+                                  "code": e.code,
+                                  "message": e.message,
+                                  "details": e.details,
+                                  "canFallbackToCard": true,
+                                  "fallbackAction": "USE_EXISTING_CARD_FLOW",
+                                  "exitFlow": true,
+                                };
+                          if (!isFallbackCase) {
+                            await _showPaymentErrorDialog(
+                              title: "Payment Failed",
+                              message:
+                                  e.message ??
+                                  "Payment failed. Please try again.",
+                            );
+                          }
                           await _notifyWebStatus(errorPayload);
-                          return {
-                            "ok": false,
-                            "reason": "NATIVE_ERROR",
-                            "code": e.code,
-                            "message": e.message,
-                            "details": e.details,
-                          };
+                          return errorPayload;
                         } catch (e) {
                           if (mounted) {
                             setState(() => _isPaymentProcessing = false);
@@ -646,12 +748,22 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                             "type": "PAYMENT_RESULT",
                             "reason": "NATIVE_ERROR",
                             "message": e.toString(),
+                            "canFallbackToCard": true,
+                            "fallbackAction": "USE_EXISTING_CARD_FLOW",
+                            "exitFlow": true,
                           });
                           return {
                             "ok": false,
                             "reason": "NATIVE_ERROR",
                             "message": e.toString(),
+                            "canFallbackToCard": true,
+                            "fallbackAction": "USE_EXISTING_CARD_FLOW",
+                            "exitFlow": true,
                           };
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isPaymentProcessing = false);
+                          }
                         }
                       }
 

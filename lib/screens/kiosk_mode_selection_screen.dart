@@ -76,14 +76,6 @@ class _KioskModeSelectionScreenState extends State<KioskModeSelectionScreen> {
         url: AppConfig.posUrl,
         color: brandColor,
       ),
-      KioskMode(
-        type: KioskModeType.mobileKiosk,
-        title: 'MOBILE KIOSK',
-        subtitle: 'Mobile Device Kiosk',
-        icon: Icons.phone_android_rounded,
-        url: AppConfig.mobileKioskUrl,
-        color: brandColor,
-      ),
     ];
   }
 
@@ -203,23 +195,19 @@ class _KioskModeSelectionScreenState extends State<KioskModeSelectionScreen> {
                                     Expanded(
                                       child: Row(
                                         children: [
-                                          KioskModeCard(
-                                            mode: kioskModes[2],
-                                            onTap: () => _openKioskMode(
-                                              context,
-                                              kioskModes[2],
+                                          const Spacer(),
+                                          SizedBox(
+                                            width: (maxWidth - 10) / 2,
+                                            child: KioskModeCard(
+                                              mode: kioskModes[2],
+                                              onTap: () => _openKioskMode(
+                                                context,
+                                                kioskModes[2],
+                                              ),
+                                              useExpanded: false,
                                             ),
-                                            useExpanded: true,
                                           ),
-                                          const SizedBox(width: 10),
-                                          KioskModeCard(
-                                            mode: kioskModes[3],
-                                            onTap: () => _openKioskMode(
-                                              context,
-                                              kioskModes[3],
-                                            ),
-                                            useExpanded: true,
-                                          ),
+                                          const Spacer(),
                                         ],
                                       ),
                                     ),
@@ -313,9 +301,12 @@ class _KioskModeSelectionScreenState extends State<KioskModeSelectionScreen> {
                         Expanded(
                           child: Row(
                             children: [
-                              Expanded(child: _buildSkeletonCard()),
-                              const SizedBox(width: 10),
-                              Expanded(child: _buildSkeletonCard()),
+                              const Spacer(),
+                              SizedBox(
+                                width: (maxWidth - 10) / 2,
+                                child: _buildSkeletonCard(),
+                              ),
+                              const Spacer(),
                             ],
                           ),
                         ),
