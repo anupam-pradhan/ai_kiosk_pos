@@ -48,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterActivity(), TerminalListener {
   private val channelName = "kiosk.stripe.terminal"
+  private val tapToPayTimeoutMs = 120_000L
   private val mainHandler = Handler(Looper.getMainLooper())
   private val isProcessing = AtomicBoolean(false)
   private val isConnectingReader = AtomicBoolean(false)
@@ -87,6 +88,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
   private val microphonePermissionRequestCode = 1002
   private val microphonePermission = Manifest.permission.RECORD_AUDIO
   private var pendingMicrophoneResult: MethodChannel.Result? = null
+  private var paymentTimeoutRunnable: Runnable? = null
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
@@ -120,11 +122,31 @@ class MainActivity : FlutterActivity(), TerminalListener {
     }
 
     pendingResult = result
+    schedulePaymentTimeout()
 
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
       finishWithError(
         "UNSUPPORTED_OS",
         "Tap to Pay requires Android 13 (API 33) or higher",
+        null
+      )
+      return
+    }
+
+    val nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+    if (nfcAdapter == null) {
+      finishWithError(
+        "NFC_UNSUPPORTED",
+        "This device does not support NFC. Tap to Pay is not available.",
+        null
+      )
+      return
+    }
+
+    if (!nfcAdapter.isEnabled) {
+      finishWithError(
+        "NFC_DISABLED",
+        "NFC is disabled. Please enable NFC in device settings to use Tap to Pay.",
         null
       )
       return
@@ -156,14 +178,29 @@ class MainActivity : FlutterActivity(), TerminalListener {
           retrieveAndProcessPayment(clientSecret, orderId)
         },
         onError = { e ->
+          val readerErrorMessage = e.errorMessage ?: "Reader error"
           val errorCode = if (
             e.errorCode == TerminalErrorCode.LOCATION_SERVICES_DISABLED
           ) {
             "LOCATION_SERVICES_DISABLED"
+          } else if (
+            readerErrorMessage.lowercase().contains("aidl") ||
+            readerErrorMessage.lowercase().contains("contactless transaction failed")
+          ) {
+            "CONTACTLESS_TRANSACTION_FAILED"
+          } else if (
+            readerErrorMessage.lowercase().contains("no such reader")
+          ) {
+            "TERMINAL_ID_MISMATCH"
           } else {
             "READER_ERROR"
           }
-          finishWithError(errorCode, e.errorMessage ?: "Reader error", e.toString())
+          val errorMessage = if (errorCode == "TERMINAL_ID_MISMATCH") {
+            "Terminal ID mismatch. Please check the configured terminal reader ID."
+          } else {
+            readerErrorMessage
+          }
+          finishWithError(errorCode, errorMessage, e.toString())
         }
       )
     }
@@ -232,13 +269,16 @@ class MainActivity : FlutterActivity(), TerminalListener {
     val terminal = Terminal.getInstance()
     val connectedReader = terminal.connectedReader
     if (connectedReader != null) {
+      Log.d("KioskTerminal", "Reader already connected: ${connectedReader.serialNumber}")
       onConnected(connectedReader)
       return
     }
 
+    Log.d("KioskTerminal", "Starting reader connection (simulated=$isSimulated)")
     ensureLocationPermission(
       onGranted = {
         if (!isLocationServicesEnabled()) {
+          Log.w("KioskTerminal", "Location services disabled")
           onError(
             TerminalException(
               TerminalErrorCode.LOCATION_SERVICES_DISABLED,
@@ -248,7 +288,10 @@ class MainActivity : FlutterActivity(), TerminalListener {
           return@ensureLocationPermission
         }
         resolveLocationId(locationId, onError) { resolvedLocationId ->
-          if (isConnectingReader.getAndSet(true)) return@resolveLocationId
+          if (isConnectingReader.getAndSet(true)) {
+            Log.w("KioskTerminal", "Reader connection already in progress")
+            return@resolveLocationId
+          }
           val discoveryConfig = DiscoveryConfiguration.TapToPayDiscoveryConfiguration(
             isSimulated = isSimulated
           )
@@ -261,20 +304,36 @@ class MainActivity : FlutterActivity(), TerminalListener {
             discoveryConfig,
             connectionConfig
           )
-          discoveryCancelable = terminal.easyConnect(
-            config,
-            object : ReaderCallback {
-              override fun onSuccess(reader: Reader) {
-                isConnectingReader.set(false)
-                mainHandler.post { onConnected(reader) }
-              }
+          try {
+            discoveryCancelable = terminal.easyConnect(
+              config,
+              object : ReaderCallback {
+                override fun onSuccess(reader: Reader) {
+                  isConnectingReader.set(false)
+                  discoveryCancelable = null
+                  mainHandler.post { onConnected(reader) }
+                }
 
-              override fun onFailure(e: TerminalException) {
-                isConnectingReader.set(false)
-                mainHandler.post { onError(e) }
+                override fun onFailure(e: TerminalException) {
+                  isConnectingReader.set(false)
+                  discoveryCancelable = null
+                  mainHandler.post { onError(e) }
+                }
               }
+            )
+          } catch (e: Exception) {
+            isConnectingReader.set(false)
+            discoveryCancelable = null
+            mainHandler.post {
+              onError(
+                TerminalException(
+                  TerminalErrorCode.MISSING_REQUIRED_PARAMETER,
+                  e.message ?: "Failed to connect Tap to Pay reader",
+                  e
+                )
+              )
             }
-          )
+          }
         }
       },
       onDenied = {
@@ -308,55 +367,109 @@ class MainActivity : FlutterActivity(), TerminalListener {
 
   private fun retrieveAndProcessPayment(clientSecret: String, orderId: String?) {
     val terminal = Terminal.getInstance()
-    terminal.retrievePaymentIntent(
-      clientSecret,
-      object : PaymentIntentCallback {
-        override fun onSuccess(paymentIntent: PaymentIntent) {
-          val collectConfig = CollectPaymentIntentConfiguration.Builder().build()
-          val confirmConfig = ConfirmPaymentIntentConfiguration.Builder().build()
-          terminal.processPaymentIntent(
-            paymentIntent,
-            collectConfig,
-            confirmConfig,
-            object : PaymentIntentCallback {
-              override fun onSuccess(processedIntent: PaymentIntent) {
-                finishWithSuccess(
-                  mapOf(
-                    "status" to "SUCCESS",
-                    "paymentIntentId" to processedIntent.id,
-                    "amount" to processedIntent.amount,
-                    "currency" to processedIntent.currency,
-                    "orderId" to orderId
-                  )
-                )
-              }
+    try {
+      terminal.retrievePaymentIntent(
+        clientSecret,
+        object : PaymentIntentCallback {
+          override fun onSuccess(paymentIntent: PaymentIntent) {
+            val collectConfig = CollectPaymentIntentConfiguration.Builder().build()
+            val confirmConfig = ConfirmPaymentIntentConfiguration.Builder().build()
+            try {
+              terminal.processPaymentIntent(
+                paymentIntent,
+                collectConfig,
+                confirmConfig,
+                object : PaymentIntentCallback {
+                  override fun onSuccess(processedIntent: PaymentIntent) {
+                    finishWithSuccess(
+                      mapOf(
+                        "status" to "SUCCESS",
+                        "paymentIntentId" to processedIntent.id,
+                        "amount" to processedIntent.amount,
+                        "currency" to processedIntent.currency,
+                        "orderId" to orderId
+                      )
+                    )
+                  }
 
-              override fun onFailure(e: TerminalException) {
-                finishWithError("PROCESS_FAILED", e.errorMessage ?: "Process failed", e.toString())
-              }
+                  override fun onFailure(e: TerminalException) {
+                    val code = classifyErrorCode("PROCESS_FAILED", e.errorMessage, e.toString())
+                    finishWithError(code, e.errorMessage ?: "Process failed", e.toString())
+                  }
+                }
+              )
+            } catch (e: Exception) {
+              val code = classifyErrorCode("PROCESS_FAILED", e.message, e.toString())
+              finishWithError(code, e.message ?: "Process failed", e.toString())
             }
-          )
-        }
+          }
 
-        override fun onFailure(e: TerminalException) {
-          finishWithError("RETRIEVE_FAILED", e.errorMessage ?: "Retrieve failed", e.toString())
+          override fun onFailure(e: TerminalException) {
+            val code = classifyErrorCode("RETRIEVE_FAILED", e.errorMessage, e.toString())
+            finishWithError(code, e.errorMessage ?: "Retrieve failed", e.toString())
+          }
         }
-      }
-    )
+      )
+    } catch (e: Exception) {
+      val code = classifyErrorCode("RETRIEVE_FAILED", e.message, e.toString())
+      finishWithError(code, e.message ?: "Retrieve failed", e.toString())
+    }
   }
 
   private fun finishWithSuccess(payload: Map<String, Any?>) {
     val result = pendingResult ?: return
     pendingResult = null
+    clearPaymentTimeout()
     isProcessing.set(false)
-    result.success(payload)
+    isConnectingReader.set(false)
+    discoveryCancelable = null
+    mainHandler.post { result.success(payload) }
   }
 
   private fun finishWithError(code: String, message: String, details: String?) {
     val result = pendingResult ?: return
     pendingResult = null
+    clearPaymentTimeout()
     isProcessing.set(false)
-    result.error(code, message, details)
+    isConnectingReader.set(false)
+    discoveryCancelable = null
+    mainHandler.post { result.error(code, message, details) }
+  }
+
+  private fun classifyErrorCode(
+    defaultCode: String,
+    message: String?,
+    details: String?
+  ): String {
+    val combined = "${message ?: ""} ${details ?: ""}".lowercase()
+    if (
+      combined.contains("contactless transaction failed") ||
+      combined.contains("aidl") ||
+      combined.contains("failed send request to aidl server") ||
+      combined.contains("connection error") ||
+      combined.contains("no reader")
+    ) {
+      return "CONTACTLESS_TRANSACTION_FAILED"
+    }
+    return defaultCode
+  }
+
+  private fun schedulePaymentTimeout() {
+    clearPaymentTimeout()
+    paymentTimeoutRunnable = Runnable {
+      if (!isProcessing.get()) return@Runnable
+      finishWithError(
+        "PAYMENT_TIMEOUT",
+        "Payment request timed out. Please try again.",
+        null
+      )
+    }
+    mainHandler.postDelayed(paymentTimeoutRunnable!!, tapToPayTimeoutMs)
+  }
+
+  private fun clearPaymentTimeout() {
+    paymentTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+    paymentTimeoutRunnable = null
   }
 
   private fun normalizeBaseUrl(baseUrl: String): String {
