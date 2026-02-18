@@ -1,4 +1,6 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.ai_kiosk_pos">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.example.ai_kiosk_pos">
      <uses-permission android:name="android.permission.INTERNET" />
      <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
      <uses-permission android:name="android.permission.NFC" />
@@ -12,11 +14,25 @@
         android:name=".KioskApplication"
         android:icon="@mipmap/ic_launcher"  
         android:usesCleartextTraffic="true">
+
+        <!-- Force Stripe's Tap to Pay activities into our task (no separate app in recents) -->
+        <activity
+            android:name="com.stripe.cots.taptopayactivity.TapToPayActivity"
+            android:taskAffinity="com.example.ai_kiosk_pos"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
+            tools:node="merge" />
+        <activity
+            android:name="com.stripe.cots.taptopayactivity.PinActivity"
+            android:taskAffinity="com.example.ai_kiosk_pos"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
+            tools:node="merge" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
+            android:taskAffinity="com.example.ai_kiosk_pos"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"

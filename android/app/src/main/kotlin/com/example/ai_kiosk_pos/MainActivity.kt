@@ -15,6 +15,8 @@ import android.nfc.NfcAdapter
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.ai_kiosk_pos.BuildConfig
+import com.google.android.gms.common.GoogleApiAvailability
+import com.google.android.gms.common.ConnectionResult
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -39,11 +41,15 @@ import com.stripe.stripeterminal.external.models.PaymentStatus
 import com.stripe.stripeterminal.external.models.Reader
 import com.stripe.stripeterminal.external.models.TerminalErrorCode
 import com.stripe.stripeterminal.external.models.TerminalException
+import com.stripe.stripeterminal.external.models.TapToPayUxConfiguration
 import com.stripe.stripeterminal.log.LogLevel
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterActivity(), TerminalListener {
@@ -90,6 +96,70 @@ class MainActivity : FlutterActivity(), TerminalListener {
   private var pendingMicrophoneResult: MethodChannel.Result? = null
   private var paymentTimeoutRunnable: Runnable? = null
 
+  /**
+   * Pre-flight check: verify the device meets all Tap to Pay requirements
+   * BEFORE touching the Stripe SDK. Returns null if OK, or an error pair (code, message).
+   */
+  private fun checkDeviceCapability(): Pair<String, String>? {
+    // 1. Android version
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+      return "UNSUPPORTED_OS" to "Tap to Pay requires Android 13 (API 33) or higher. This device runs Android ${Build.VERSION.SDK_INT}."
+    }
+
+    // 2. NFC hardware
+    val nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+    if (nfcAdapter == null) {
+      return "NFC_UNSUPPORTED" to "This device does not have NFC hardware. Tap to Pay is not available."
+    }
+    if (!nfcAdapter.isEnabled) {
+      return "NFC_DISABLED" to "NFC is disabled. Please enable NFC in device settings to use Tap to Pay."
+    }
+
+    // 3. Google Play Services
+    val gmsAvailability = GoogleApiAvailability.getInstance()
+    val gmsResult = gmsAvailability.isGooglePlayServicesAvailable(this)
+    if (gmsResult != ConnectionResult.SUCCESS) {
+      val gmsMessage = gmsAvailability.getErrorString(gmsResult)
+      Log.e("KioskTerminal", "Google Play Services not available: $gmsMessage (code=$gmsResult)")
+      return "TAP_TO_PAY_INSECURE_ENVIRONMENT" to "Google Play Services required for Tap to Pay. Status: $gmsMessage"
+    }
+
+    // 4. Security patch date (must be within last 12 months)
+    try {
+      val patchDateStr = Build.VERSION.SECURITY_PATCH // format: "YYYY-MM-DD"
+      val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+      val patchDate = sdf.parse(patchDateStr)
+      if (patchDate != null) {
+        val cutoff = Calendar.getInstance().apply { add(Calendar.MONTH, -12) }.time
+        if (patchDate.before(cutoff)) {
+          Log.w("KioskTerminal", "Security patch too old: $patchDateStr")
+          return "TAP_TO_PAY_INSECURE_ENVIRONMENT" to "Security patch ($patchDateStr) is over 12 months old. Please update your device."
+        }
+      }
+    } catch (e: Exception) {
+      Log.w("KioskTerminal", "Could not check security patch date: ${e.message}")
+    }
+
+    // 5. Developer options (production only)
+    if (!BuildConfig.DEBUG) {
+      try {
+        val devEnabled = Settings.Global.getInt(
+          contentResolver,
+          Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+          0
+        )
+        if (devEnabled != 0) {
+          Log.w("KioskTerminal", "Developer options are enabled in production")
+          return "TAP_TO_PAY_INSECURE_ENVIRONMENT" to "Developer options must be disabled for Tap to Pay in production."
+        }
+      } catch (e: Exception) {
+        Log.w("KioskTerminal", "Could not check developer options: ${e.message}")
+      }
+    }
+
+    return null // All checks passed
+  }
+
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
 
@@ -124,33 +194,14 @@ class MainActivity : FlutterActivity(), TerminalListener {
     pendingResult = result
     schedulePaymentTimeout()
 
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-      finishWithError(
-        "UNSUPPORTED_OS",
-        "Tap to Pay requires Android 13 (API 33) or higher",
-        null
-      )
+    // Pre-flight device capability check — catches all issues before touching Stripe SDK
+    val capabilityError = checkDeviceCapability()
+    if (capabilityError != null) {
+      finishWithError(capabilityError.first, capabilityError.second, null)
       return
     }
 
-    val nfcAdapter = NfcAdapter.getDefaultAdapter(this)
-    if (nfcAdapter == null) {
-      finishWithError(
-        "NFC_UNSUPPORTED",
-        "This device does not support NFC. Tap to Pay is not available.",
-        null
-      )
-      return
-    }
-
-    if (!nfcAdapter.isEnabled) {
-      finishWithError(
-        "NFC_DISABLED",
-        "NFC is disabled. Please enable NFC in device settings to use Tap to Pay.",
-        null
-      )
-      return
-    }
+    // NFC checks are now handled by checkDeviceCapability() above
 
     val clientSecret = args["clientSecret"] as? String
     val orderId = args["orderId"] as? String
@@ -216,10 +267,24 @@ class MainActivity : FlutterActivity(), TerminalListener {
           this,
           null
         )
+        Log.i("KioskTerminal", "Terminal initialized successfully")
+        // Note: TapToPayUxConfiguration is NOT set here intentionally.
+        // The SDK auto-detects the device's NFC coil position from its
+        // built-in database, showing the correct tap indicator per device.
       }
       onReady()
     } catch (e: Exception) {
-      finishWithError("INIT_FAILED", e.message ?: "Failed to initialize Terminal", e.toString())
+      Log.e("KioskTerminal", "Terminal init Exception: ${e.message}", e)
+      val code = classifyErrorCode("INIT_FAILED", e.message, e.toString())
+      finishWithError(code, e.message ?: "Failed to initialize Terminal", e.toString())
+    } catch (e: Error) {
+      // Catches NoClassDefFoundError, ExceptionInInitializerError, etc. on old devices
+      Log.e("KioskTerminal", "Terminal init fatal Error: ${e.message}", e)
+      finishWithError(
+        "TAP_TO_PAY_INSECURE_ENVIRONMENT",
+        "This device is not compatible with Tap to Pay. ${e.message ?: ""}",
+        e.toString()
+      )
     }
   }
 
@@ -267,14 +332,27 @@ class MainActivity : FlutterActivity(), TerminalListener {
     onError: (TerminalException) -> Unit
   ) {
     val terminal = Terminal.getInstance()
+
+    // Reuse existing connection for speed. Stale data is already cleaned
+    // by KioskApplication.nukeStaleStripeData() on version change.
     val connectedReader = terminal.connectedReader
     if (connectedReader != null) {
-      Log.d("KioskTerminal", "Reader already connected: ${connectedReader.serialNumber}")
+      Log.d("KioskTerminal", "Reusing already-connected reader: ${connectedReader.serialNumber}")
       onConnected(connectedReader)
       return
     }
 
-    Log.d("KioskTerminal", "Starting reader connection (simulated=$isSimulated)")
+    connectFreshReader(terminal, locationId, isSimulated, onConnected, onError)
+  }
+
+  private fun connectFreshReader(
+    terminal: Terminal,
+    locationId: String?,
+    isSimulated: Boolean,
+    onConnected: (Reader) -> Unit,
+    onError: (TerminalException) -> Unit
+  ) {
+    Log.d("KioskTerminal", "Starting fresh reader connection (simulated=$isSimulated)")
     ensureLocationPermission(
       onGranted = {
         if (!isLocationServicesEnabled()) {
@@ -331,6 +409,18 @@ class MainActivity : FlutterActivity(), TerminalListener {
                   e.message ?: "Failed to connect Tap to Pay reader",
                   e
                 )
+              )
+            }
+          } catch (e: Error) {
+            // Catches fatal errors like NoClassDefFoundError on incompatible devices
+            isConnectingReader.set(false)
+            discoveryCancelable = null
+            Log.e("KioskTerminal", "Fatal error during easyConnect: ${e.message}", e)
+            mainHandler.post {
+              finishWithError(
+                "TAP_TO_PAY_INSECURE_ENVIRONMENT",
+                "This device is not compatible with Tap to Pay. ${e.message ?: ""}",
+                e.toString()
               )
             }
           }
@@ -450,6 +540,17 @@ class MainActivity : FlutterActivity(), TerminalListener {
       combined.contains("no reader")
     ) {
       return "CONTACTLESS_TRANSACTION_FAILED"
+    }
+    if (
+      combined.contains("insecure environment") ||
+      combined.contains("hardware keystore") ||
+      combined.contains("security patch") ||
+      combined.contains("google play") ||
+      combined.contains("feature_hardware_keystore") ||
+      combined.contains("bootloader") ||
+      combined.contains("rooted")
+    ) {
+      return "TAP_TO_PAY_INSECURE_ENVIRONMENT"
     }
     return defaultCode
   }

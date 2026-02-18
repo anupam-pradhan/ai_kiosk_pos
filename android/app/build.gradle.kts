@@ -57,6 +57,7 @@ flutter {
 }
 
 dependencies {
-    implementation("com.stripe:stripeterminal-taptopay:5.1.1")
-    implementation("com.stripe:stripeterminal-core:5.1.1")
+    implementation("com.stripe:stripeterminal-taptopay:5.2.0")
+    implementation("com.stripe:stripeterminal-core:5.2.0")
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 }
