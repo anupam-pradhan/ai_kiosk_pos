@@ -281,10 +281,6 @@ class MainActivity : FlutterActivity(), TerminalListener {
           Log.w("KioskTerminal", "Could not set TapToPayUxConfiguration: ${e.message}")
         }
       }
-      // Warm up the TTP component on every init — this triggers a background
-      // re-download if the component is missing (e.g. deleted by old cleanup code).
-      // This is what restores the device-specific NFC coil screen on old devices.
-      warmUpTapToPayComponent()
       onReady()
     } catch (e: Exception) {
       Log.e("KioskTerminal", "Terminal init Exception: ${e.message}", e)
@@ -301,23 +297,6 @@ class MainActivity : FlutterActivity(), TerminalListener {
     }
   }
 
-  /**
-   * Triggers a background check/download of the Tap to Pay component.
-   * This is critical for old devices where the component was previously deleted —
-   * calling supportsReadersOfType() causes the SDK to verify and re-fetch the
-   * component from Google Play Services, restoring the device-specific NFC coil screen.
-   */
-  private fun warmUpTapToPayComponent() {
-    Thread {
-      try {
-        val discoveryConfig = DiscoveryConfiguration.TapToPayDiscoveryConfiguration(isSimulated = false)
-        val result = Terminal.getInstance().supportsReadersOfType(discoveryConfig)
-        Log.i("KioskTerminal", "TTP component warmup complete: supported=${result.isSupported}, error=${result.error?.errorMessage}")
-      } catch (e: Exception) {
-        Log.d("KioskTerminal", "TTP warmup: ${e.message}")
-      }
-    }.start()
-  }
 
   private fun createTokenProvider(baseUrl: String): ConnectionTokenProvider {
     return object : ConnectionTokenProvider {

@@ -40,6 +40,7 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
   String _pageLoadErrorMessage = '';
   bool _showWebView = true;
   bool _nfcResumeCheckInFlight = false;
+  bool _isPreparingReader = false;
 
   static const Set<String> _fallbackEligibleCodes = {
     "UNSUPPORTED_OS",
@@ -336,11 +337,16 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
 
   Widget _buildLoadingOverlay() {
     if (_showSplash) return const SizedBox.shrink();
-    final show = _isPageLoading || _isPaymentProcessing || _isMicRequesting;
+    final show = _isPageLoading || _isPaymentProcessing || _isMicRequesting || _isPreparingReader;
     if (!show) return const SizedBox.shrink();
     final label = _isMicRequesting
         ? "Requesting microphone..."
-        : (_isPaymentProcessing ? "Processing payment..." : "Loading...");
+        : (_isPreparingReader
+            ? "Preparing payment reader..."
+            : (_isPaymentProcessing ? "Processing payment..." : "Loading..."));
+    final sublabel = _isPreparingReader
+        ? "Setting up secure tap zone"
+        : "Please wait a moment";
     const brandColor = Color(0xFFC2410C);
     return Positioned.fill(
       child: Container(
@@ -385,10 +391,10 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
-                const Text(
-                  "Please wait a moment",
-                  style: TextStyle(color: Colors.black54, fontSize: 13),
+                const SizedBox(height: 12),
+                Text(
+                  sublabel,
+                  style: const TextStyle(color: Colors.black54, fontSize: 13),
                 ),
               ],
             ),
@@ -639,7 +645,18 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                         }
 
                         if (mounted) {
-                          setState(() => _isPaymentProcessing = true);
+                          setState(() {
+                            _isPreparingReader = true;
+                            _isPaymentProcessing = false;
+                          });
+                        }
+                        // Wait 2s for TTP component to initialize before payment
+                        await Future.delayed(const Duration(seconds: 2));
+                        if (mounted) {
+                          setState(() {
+                            _isPreparingReader = false;
+                            _isPaymentProcessing = true;
+                          });
                         }
                         try {
                           final nativeRes = await terminalChannel
@@ -763,7 +780,10 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                           };
                         } finally {
                           if (mounted) {
-                            setState(() => _isPaymentProcessing = false);
+                            setState(() {
+                              _isPaymentProcessing = false;
+                              _isPreparingReader = false;
+                            });
                           }
                         }
                       }
