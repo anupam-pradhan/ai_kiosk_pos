@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -40,7 +41,12 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
   String _pageLoadErrorMessage = '';
   bool _showWebView = true;
   bool _nfcResumeCheckInFlight = false;
-  bool _isPreparingReader = false;
+
+  /// Stream that receives real-time TTP progress events from native.
+  /// Native sends: {step: 0-3, message: String}
+  final StreamController<Map<String, dynamic>> _ttpProgressController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
 
   static const Set<String> _fallbackEligibleCodes = {
     "UNSUPPORTED_OS",
@@ -60,12 +66,26 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     "BUSY",
     "PAYMENT_TIMEOUT",
     "PAYMENT_CANCELLED",
+    "SERVER_UNREACHABLE",
   };
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Handle native → Flutter calls on the terminal channel.
+    // This receives real-time TTP progress events from MainActivity.
+    terminalChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onTtpProgress') {
+        final args = call.arguments;
+        if (args is Map) {
+          _ttpProgressController.add(Map<String, dynamic>.from(args));
+        }
+      }
+      return null;
+    });
+
     Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
       _splashMinElapsed = true;
@@ -76,6 +96,8 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    terminalChannel.setMethodCallHandler(null);
+    _ttpProgressController.close();
     super.dispose();
   }
 
@@ -292,8 +314,169 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     );
   }
 
-  Future<void> _showPaymentSuccessDialog(String message) async {
+  /// Shows an animated progress dialog while the TTP component downloads.
+  /// Progress steps are driven by REAL native events (onTtpProgress) from MainActivity.
+  /// A safety fallback timer advances steps if native events are delayed.
+  Future<void> _showTtpPrepareDialog({
+    required String terminalBaseUrl,
+    required String locationId,
+    required bool isSimulated,
+  }) async {
     if (!mounted) return;
+
+    // Steps map native step index → display message
+    // Native sends step 0=Initializing, 1=Connecting, 2=Downloading, 3=Ready
+    const stepMessages = [
+      'Initializing payment terminal...',
+      'Connecting to payment reader...',
+      'Downloading payment component...',
+      'Payment reader ready!',
+    ];
+
+    int currentStep = 0;
+    String currentMessage = stepMessages[0];
+    bool isDone = false;
+    StateSetter? dialogSetState;
+
+    // Start native prepare call in parallel (60s timeout for slow component downloads)
+    final prepareFuture = terminalChannel
+        .invokeMethod('prepareTapToPay', {
+          'terminalBaseUrl': terminalBaseUrl,
+          'locationId': locationId,
+          'isSimulated': isSimulated,
+        })
+        .timeout(
+          const Duration(seconds: 60),
+          onTimeout: () => {'status': 'READY'},
+        )
+        .catchError((_) => {'status': 'READY'});
+
+    // Listen to REAL native progress events
+    final progressSub = _ttpProgressController.stream.listen((event) {
+      if (isDone || dialogSetState == null) return;
+      final step = event['step'] as int? ?? currentStep;
+      final msg = event['message'] as String? ?? stepMessages[math.min(step, stepMessages.length - 1)];
+      dialogSetState!(() {
+        currentStep = math.min(step, stepMessages.length - 1);
+        currentMessage = msg;
+      });
+    });
+
+    // Safety fallback: if native events are slow, advance steps every 8s
+    // This only kicks in if native hasn't sent an event for that step yet
+    final fallbackTimer = Stream.periodic(const Duration(seconds: 8), (i) => i)
+        .take(stepMessages.length - 1)
+        .listen((i) {
+      if (isDone || dialogSetState == null) return;
+      final nextStep = i + 1;
+      if (nextStep > currentStep) {
+        // Only advance if native hasn't already moved us past this step
+        dialogSetState!(() {
+          currentStep = nextStep;
+          currentMessage = stepMessages[nextStep];
+        });
+      }
+    });
+
+    // Show dialog
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) {
+          dialogSetState = setState;
+          return Dialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 4,
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFC2410C)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Preparing Payment Reader',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 400),
+                    child: Text(
+                      currentMessage,
+                      key: ValueKey(currentMessage),
+                      style: const TextStyle(color: Colors.black54, fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(
+                    value: (currentStep + 1) / stepMessages.length,
+                    backgroundColor: Colors.grey[200],
+                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFC2410C)),
+                    minHeight: 6,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Step ${currentStep + 1} of ${stepMessages.length}',
+                    style: const TextStyle(color: Colors.black38, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    try {
+      // Wait for native call to complete
+      await prepareFuture;
+    } finally {
+      isDone = true;
+      progressSub.cancel();
+      fallbackTimer.cancel();
+    }
+
+    // Show "Ready!" briefly then close
+    if (dialogSetState != null) {
+      dialogSetState!(() {
+        currentStep = stepMessages.length - 1;
+        currentMessage = stepMessages.last;
+      });
+    }
+    await Future.delayed(const Duration(milliseconds: 700));
+
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _showPaymentSuccessDialog({
+    String? last4,
+    String? cardBrand,
+    int? amountCents,
+    String? currency,
+  }) async {
+    if (!mounted) return;
+    // Format amount: cents -> readable string e.g. "$12.50"
+    String amountStr = '';
+    if (amountCents != null && amountCents > 0) {
+      final dollars = amountCents / 100.0;
+      final currencySymbol = (currency ?? 'usd').toLowerCase() == 'usd' ? '\$' : (currency?.toUpperCase() ?? '');
+      amountStr = '$currencySymbol${dollars.toStringAsFixed(2)}';
+    }
+    final cardStr = (last4 != null && last4.isNotEmpty)
+        ? '${cardBrand != null ? '${_formatBrand(cardBrand)} ' : ''}ending in $last4'
+        : '';
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -303,7 +486,7 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
             children: const [
               Icon(Icons.check_circle_outline, color: Colors.green),
               SizedBox(width: 8),
-              Expanded(child: Text("Payment Successful")),
+              Expanded(child: Text('Payment Successful')),
             ],
           ),
           content: Column(
@@ -311,14 +494,34 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
             children: [
               const Icon(Icons.verified, color: Colors.green, size: 48),
               const SizedBox(height: 12),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 6),
+              if (amountStr.isNotEmpty)
+                Text(
+                  amountStr,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 28,
+                    color: Colors.green,
+                  ),
+                ),
+              if (cardStr.isNotEmpty) ...
+                [
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.credit_card, size: 16, color: Colors.black54),
+                      const SizedBox(width: 4),
+                      Text(
+                        cardStr,
+                        style: const TextStyle(color: Colors.black54, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ],
+              const SizedBox(height: 8),
               const Text(
-                "Your order will be prepared shortly.",
+                'Your order will be prepared shortly.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.black54, fontSize: 13),
               ),
@@ -327,7 +530,7 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text("OK"),
+              child: const Text('OK'),
             ),
           ],
         );
@@ -335,18 +538,30 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     );
   }
 
+  String _formatBrand(String brand) {
+    switch (brand.toLowerCase()) {
+      case 'visa': return 'Visa';
+      case 'mastercard': return 'Mastercard';
+      case 'amex': return 'Amex';
+      case 'discover': return 'Discover';
+      case 'jcb': return 'JCB';
+      case 'unionpay': return 'UnionPay';
+      default: return brand[0].toUpperCase() + brand.substring(1);
+    }
+  }
+
   Widget _buildLoadingOverlay() {
     if (_showSplash) return const SizedBox.shrink();
-    final show = _isPageLoading || _isPaymentProcessing || _isMicRequesting || _isPreparingReader;
+
+    // Only show for page load, payment processing (after TTP prep), or mic request
+    final show = _isPageLoading || _isPaymentProcessing || _isMicRequesting;
     if (!show) return const SizedBox.shrink();
+
     final label = _isMicRequesting
         ? "Requesting microphone..."
-        : (_isPreparingReader
-            ? "Preparing payment reader..."
-            : (_isPaymentProcessing ? "Processing payment..." : "Loading..."));
-    final sublabel = _isPreparingReader
-        ? "Setting up secure tap zone"
-        : "Please wait a moment";
+        : (_isPaymentProcessing ? "Processing payment..." : "Loading...");
+    
+    final sublabel = "Please wait a moment";
     const brandColor = Color(0xFFC2410C);
     return Positioned.fill(
       child: Container(
@@ -646,15 +861,18 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
 
                         if (mounted) {
                           setState(() {
-                            _isPreparingReader = true;
+                            // Don't set _isPaymentProcessing=true yet; waiting for prep dialog
                             _isPaymentProcessing = false;
                           });
                         }
-                        // Wait 2s for TTP component to initialize before payment
-                        await Future.delayed(const Duration(seconds: 2));
+                        // Show animated progress dialog while TTP component downloads
+                        await _showTtpPrepareDialog(
+                          terminalBaseUrl: terminalBaseUrl as String,
+                          locationId: locationId as String,
+                          isSimulated: AppConfig.isTapToPaySimulated,
+                        );
                         if (mounted) {
                           setState(() {
-                            _isPreparingReader = false;
                             _isPaymentProcessing = true;
                           });
                         }
@@ -678,8 +896,14 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                             "data": nativeRes,
                           });
 
+                          final resMap = nativeRes is Map
+                              ? Map<String, dynamic>.from(nativeRes as Map)
+                              : <String, dynamic>{};
                           await _showPaymentSuccessDialog(
-                            "Payment successful.",
+                            last4: resMap['last4'] as String?,
+                            cardBrand: resMap['cardBrand'] as String?,
+                            amountCents: resMap['amount'] as int?,
+                            currency: resMap['currency'] as String?,
                           );
 
                           return {"ok": true, "data": nativeRes};
@@ -782,7 +1006,6 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                           if (mounted) {
                             setState(() {
                               _isPaymentProcessing = false;
-                              _isPreparingReader = false;
                             });
                           }
                         }

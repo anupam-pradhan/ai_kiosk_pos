@@ -22,12 +22,14 @@ class KioskApplication : Application() {
   override fun onCreate() {
     super.onCreate()
     nukeStaleStripeData()
-    try {
+    initializeStripeTerminal()
+  }
+
+  private fun initializeStripeTerminal() {
+    runCatching {
       TerminalApplicationDelegate.onCreate(this)
-    } catch (e: Exception) {
+    }.onFailure { e ->
       Log.e(TAG, "TerminalApplicationDelegate init failed: ${e.message}", e)
-    } catch (e: Error) {
-      Log.e(TAG, "TerminalApplicationDelegate init fatal error: ${e.message}", e)
     }
   }
 
@@ -43,82 +45,60 @@ class KioskApplication : Application() {
    *  - The app's internal cache directory for Stripe
    */
   private fun nukeStaleStripeData() {
-    try {
-      val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-      val storedSdkVersion = prefs.getString(KEY_SDK_VERSION, null)
-      val storedDataVersion = prefs.getInt(KEY_DATA_VERSION, 0)
+    val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+    val storedSdkVersion = prefs.getString(KEY_SDK_VERSION, null)
+    val storedDataVersion = prefs.getInt(KEY_DATA_VERSION, 0)
 
-      if (storedSdkVersion == CURRENT_SDK_VERSION && storedDataVersion == DATA_VERSION) {
-        return // Already clean, skip
-      }
+    if (storedSdkVersion == CURRENT_SDK_VERSION && storedDataVersion == DATA_VERSION) {
+      return // Already clean, skip
+    }
 
-      Log.w(TAG, "Stripe data wipe required: sdk=$storedSdkVersion->$CURRENT_SDK_VERSION, dataVer=$storedDataVersion->$DATA_VERSION")
+    Log.w(TAG, "Stripe data wipe required: sdk=$storedSdkVersion->$CURRENT_SDK_VERSION, dataVer=$storedDataVersion->$DATA_VERSION")
 
-      var cleanedCount = 0
+    var cleanedCount = 0
 
-      // 1. Delete ALL databases that might belong to Stripe Terminal
-      try {
-        val dbNames = databaseList()
-        for (dbName in dbNames) {
-          if (isStripeRelated(dbName)) {
-            val deleted = deleteDatabase(dbName)
-            Log.i(TAG, "Deleted DB '$dbName': $deleted")
+    // 1. Delete ALL databases that might belong to Stripe Terminal
+    runCatching {
+      databaseList().forEach { dbName ->
+        if (isStripeRelated(dbName)) {
+          if (deleteDatabase(dbName)) {
+            Log.i(TAG, "Deleted DB '$dbName'")
             cleanedCount++
           }
         }
-      } catch (e: Exception) {
-        Log.w(TAG, "Error cleaning databases: ${e.message}")
       }
+    }.onFailure { Log.w(TAG, "Error cleaning databases: ${it.message}") }
 
-      // 2. Delete ALL SharedPreferences files EXCEPT our own tracker.
-      // The corrupted Tink keyset is stored in SharedPrefs with an
-      // unpredictable name, so we must wipe everything to be safe.
-      try {
-        val prefsDir = File(filesDir.parentFile, "shared_prefs")
-        if (prefsDir.exists()) {
-          prefsDir.listFiles()?.forEach { file ->
-            // Keep our own prefs file so we can track the version
-            if (!file.name.startsWith(PREFS_NAME)) {
-              val deleted = file.delete()
-              Log.i(TAG, "Deleted prefs '${file.name}': $deleted")
+    // 2. Delete ALL SharedPreferences files EXCEPT our own tracker.
+    // The corrupted Tink keyset is stored in SharedPrefs with an
+    // unpredictable name, so we must wipe everything to be safe.
+    runCatching {
+      // dataDir is available since API 24 (we are minSdk 33)
+      val prefsDir = File(dataDir, "shared_prefs")
+      if (prefsDir.exists()) {
+        prefsDir.listFiles()?.forEach { file ->
+          if (!file.name.startsWith(PREFS_NAME)) {
+            if (file.delete()) {
+              Log.i(TAG, "Deleted prefs '${file.name}'")
               cleanedCount++
             }
           }
         }
-      } catch (e: Exception) {
-        Log.w(TAG, "Error cleaning SharedPreferences: ${e.message}")
       }
+    }.onFailure { Log.w(TAG, "Error cleaning SharedPreferences: ${it.message}") }
 
-      // NOTE: We intentionally do NOT clean filesDir, cacheDir, or noBackupFilesDir.
-      // The Stripe SDK stores the downloaded Tap to Pay component there, which
-      // contains device-specific NFC coil positions and the latest UI assets.
-      // Deleting these forces the SDK to re-download, showing the old/basic screen.
-      // The crashes were caused by corrupted Tink keysets in SharedPreferences only.
+    // NOTE: We intentionally do NOT clean filesDir, cacheDir, or noBackupFilesDir.
+    // The Stripe SDK stores the downloaded Tap to Pay component there, which
+    // contains device-specific NFC coil positions and the latest UI assets.
+    // Deleting these forces the SDK to re-download, showing the old/basic screen.
 
-      // Save current versions so we don't wipe again next time
-      prefs.edit()
-        .putString(KEY_SDK_VERSION, CURRENT_SDK_VERSION)
-        .putInt(KEY_DATA_VERSION, DATA_VERSION)
-        .apply()
+    // Save current versions so we don't wipe again next time
+    prefs.edit()
+      .putString(KEY_SDK_VERSION, CURRENT_SDK_VERSION)
+      .putInt(KEY_DATA_VERSION, DATA_VERSION)
+      .apply()
 
-      Log.i(TAG, "Stripe data wipe complete. Cleaned $cleanedCount items.")
-    } catch (e: Exception) {
-      Log.e(TAG, "Fatal error during Stripe data wipe: ${e.message}", e)
-    }
-  }
-
-  /**
-   * Recursively walk a directory and delete any files/subdirs
-   * whose names appear Stripe/Terminal-related.
-   */
-  private fun cleanDirectory(dir: File, label: String) {
-    if (!dir.exists()) return
-    dir.listFiles()?.forEach { file ->
-      if (isStripeRelated(file.name)) {
-        val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
-        Log.i(TAG, "Deleted $label '${file.name}': $deleted")
-      }
-    }
+    Log.i(TAG, "Stripe data wipe complete. Cleaned $cleanedCount items.")
   }
 
   /**
@@ -127,16 +107,12 @@ class KioskApplication : Application() {
    */
   private fun isStripeRelated(name: String): Boolean {
     val lower = name.lowercase()
-    return lower.contains("stripe") ||
-           lower.contains("terminal") ||
-           lower.contains("taptopay") ||
-           lower.contains("tap_to_pay") ||
-           lower.contains("ttpa") ||
-           lower.contains("com.stripe") ||
-           lower.contains("tink") ||
-           lower.contains("keyset") ||
-           lower.contains("crypto") ||
-           lower.contains("discover") ||
-           lower.contains("mpos")
+    return lower.containsAny(
+      "stripe", "terminal", "taptopay", "tap_to_pay", "ttpa",
+      "com.stripe", "tink", "keyset", "crypto", "discover", "mpos"
+    )
   }
+
+  // Extension helper for cleaner checks
+  private fun String.containsAny(vararg tokens: String): Boolean = tokens.any { this.contains(it) }
 }

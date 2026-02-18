@@ -60,4 +60,8 @@ dependencies {
     implementation("com.stripe:stripeterminal-taptopay:5.2.0")
     implementation("com.stripe:stripeterminal-core:5.2.0")
     implementation("com.google.android.gms:play-services-base:18.5.0")
+    // Modern HTTP client (replaces raw HttpURLConnection + Thread)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Kotlin coroutines for structured async
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
