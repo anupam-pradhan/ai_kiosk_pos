@@ -58,6 +58,7 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     "PAYMENT_ALREADY_IN_PROGRESS",
     "BUSY",
     "PAYMENT_TIMEOUT",
+    "PAYMENT_CANCELLED",
   };
 
   @override

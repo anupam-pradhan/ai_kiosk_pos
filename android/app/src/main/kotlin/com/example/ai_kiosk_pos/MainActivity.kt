@@ -60,6 +60,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
   private val isConnectingReader = AtomicBoolean(false)
   private var pendingResult: MethodChannel.Result? = null
   private var discoveryCancelable: Cancelable? = null
+  private var currentPaymentCancelable: Cancelable? = null
   private var terminalBaseUrl: String? = null
   private var pendingPermissionGranted: (() -> Unit)? = null
   private var pendingPermissionDenied: (() -> Unit)? = null
@@ -268,10 +269,22 @@ class MainActivity : FlutterActivity(), TerminalListener {
           null
         )
         Log.i("KioskTerminal", "Terminal initialized successfully")
-        // Note: TapToPayUxConfiguration is NOT set here intentionally.
-        // The SDK auto-detects the device's NFC coil position from its
-        // built-in database, showing the correct tap indicator per device.
+        // TapZone.Default = device-specific NFC coil screen (not generic).
+        // SDK auto-detects the exact coil position for each device model.
+        try {
+          val uxConfig = TapToPayUxConfiguration.Builder()
+            .tapZone(TapToPayUxConfiguration.TapZone.Default)
+            .build()
+          Terminal.getInstance().setTapToPayUxConfiguration(uxConfig)
+          Log.i("KioskTerminal", "TapToPayUxConfiguration applied: TapZone.Default")
+        } catch (e: Exception) {
+          Log.w("KioskTerminal", "Could not set TapToPayUxConfiguration: ${e.message}")
+        }
       }
+      // Warm up the TTP component on every init — this triggers a background
+      // re-download if the component is missing (e.g. deleted by old cleanup code).
+      // This is what restores the device-specific NFC coil screen on old devices.
+      warmUpTapToPayComponent()
       onReady()
     } catch (e: Exception) {
       Log.e("KioskTerminal", "Terminal init Exception: ${e.message}", e)
@@ -286,6 +299,24 @@ class MainActivity : FlutterActivity(), TerminalListener {
         e.toString()
       )
     }
+  }
+
+  /**
+   * Triggers a background check/download of the Tap to Pay component.
+   * This is critical for old devices where the component was previously deleted —
+   * calling supportsReadersOfType() causes the SDK to verify and re-fetch the
+   * component from Google Play Services, restoring the device-specific NFC coil screen.
+   */
+  private fun warmUpTapToPayComponent() {
+    Thread {
+      try {
+        val discoveryConfig = DiscoveryConfiguration.TapToPayDiscoveryConfiguration(isSimulated = false)
+        val result = Terminal.getInstance().supportsReadersOfType(discoveryConfig)
+        Log.i("KioskTerminal", "TTP component warmup complete: supported=${result.isSupported}, error=${result.error?.errorMessage}")
+      } catch (e: Exception) {
+        Log.d("KioskTerminal", "TTP warmup: ${e.message}")
+      }
+    }.start()
   }
 
   private fun createTokenProvider(baseUrl: String): ConnectionTokenProvider {
@@ -465,12 +496,13 @@ class MainActivity : FlutterActivity(), TerminalListener {
             val collectConfig = CollectPaymentIntentConfiguration.Builder().build()
             val confirmConfig = ConfirmPaymentIntentConfiguration.Builder().build()
             try {
-              terminal.processPaymentIntent(
+              currentPaymentCancelable = terminal.processPaymentIntent(
                 paymentIntent,
                 collectConfig,
                 confirmConfig,
                 object : PaymentIntentCallback {
                   override fun onSuccess(processedIntent: PaymentIntent) {
+                    currentPaymentCancelable = null
                     finishWithSuccess(
                       mapOf(
                         "status" to "SUCCESS",
@@ -483,12 +515,14 @@ class MainActivity : FlutterActivity(), TerminalListener {
                   }
 
                   override fun onFailure(e: TerminalException) {
+                    currentPaymentCancelable = null
                     val code = classifyErrorCode("PROCESS_FAILED", e.errorMessage, e.toString())
                     finishWithError(code, e.errorMessage ?: "Process failed", e.toString())
                   }
                 }
               )
             } catch (e: Exception) {
+              currentPaymentCancelable = null
               val code = classifyErrorCode("PROCESS_FAILED", e.message, e.toString())
               finishWithError(code, e.message ?: "Process failed", e.toString())
             }
@@ -513,6 +547,7 @@ class MainActivity : FlutterActivity(), TerminalListener {
     isProcessing.set(false)
     isConnectingReader.set(false)
     discoveryCancelable = null
+    currentPaymentCancelable = null
     mainHandler.post { result.success(payload) }
   }
 
@@ -523,7 +558,36 @@ class MainActivity : FlutterActivity(), TerminalListener {
     isProcessing.set(false)
     isConnectingReader.set(false)
     discoveryCancelable = null
+    currentPaymentCancelable = null
     mainHandler.post { result.error(code, message, details) }
+  }
+
+  /**
+   * When the app is minimized (sent to background) during a payment,
+   * cancel the active payment immediately instead of letting it hang.
+   * This returns PAYMENT_CANCELLED to Flutter so the UI can recover.
+   */
+  override fun onStop() {
+    super.onStop()
+    if (isProcessing.get()) {
+      Log.w("KioskTerminal", "App minimized during payment — cancelling active payment")
+      val cancelable = currentPaymentCancelable
+      if (cancelable != null && !cancelable.isCompleted) {
+        cancelable.cancel(object : com.stripe.stripeterminal.external.callable.Callback {
+          override fun onSuccess() {
+            Log.i("KioskTerminal", "Payment cancelled due to app minimize")
+            finishWithError("PAYMENT_CANCELLED", "Payment was cancelled because the app was minimized.", null)
+          }
+          override fun onFailure(e: TerminalException) {
+            Log.w("KioskTerminal", "Cancel failed: ${e.errorMessage}")
+            finishWithError("PAYMENT_CANCELLED", "Payment was cancelled because the app was minimized.", null)
+          }
+        })
+      } else {
+        // No cancelable yet (still connecting/retrieving) — just reset state
+        finishWithError("PAYMENT_CANCELLED", "Payment was cancelled because the app was minimized.", null)
+      }
+    }
   }
 
   private fun classifyErrorCode(
