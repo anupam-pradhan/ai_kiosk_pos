@@ -57,8 +57,8 @@ flutter {
 }
 
 dependencies {
-    implementation("com.stripe:stripeterminal-taptopay:5.2.0")
-    implementation("com.stripe:stripeterminal-core:5.2.0")
+    implementation("com.stripe:stripeterminal-taptopay:4.7.6")
+    implementation("com.stripe:stripeterminal-core:4.7.6")
     implementation("com.google.android.gms:play-services-base:18.5.0")
     // Modern HTTP client (replaces raw HttpURLConnection + Thread)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

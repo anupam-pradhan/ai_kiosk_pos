@@ -41,6 +41,8 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
   String _pageLoadErrorMessage = '';
   bool _showWebView = true;
   bool _nfcResumeCheckInFlight = false;
+  Timer? _retryTimer;
+  int _retryCount = 0;
 
   /// Stream that receives real-time TTP progress events from native.
   /// Native sends: {step: 0-3, message: String}
@@ -97,7 +99,10 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     terminalChannel.setMethodCallHandler(null);
+    WidgetsBinding.instance.removeObserver(this);
+    terminalChannel.setMethodCallHandler(null);
     _ttpProgressController.close();
+    _retryTimer?.cancel();
     super.dispose();
   }
 
@@ -339,6 +344,7 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
     StateSetter? dialogSetState;
 
     // Start native prepare call in parallel (60s timeout for slow component downloads)
+    Map<dynamic, dynamic> prepareResult = {'status': 'UNKNOWN'};
     final prepareFuture = terminalChannel
         .invokeMethod('prepareTapToPay', {
           'terminalBaseUrl': terminalBaseUrl,
@@ -347,9 +353,16 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
         })
         .timeout(
           const Duration(seconds: 60),
-          onTimeout: () => {'status': 'READY'},
+          onTimeout: () => {'status': 'TIMEOUT'},
         )
-        .catchError((_) => {'status': 'READY'});
+        .then((res) {
+          if (res is Map) prepareResult = res;
+          return res;
+        })
+        .catchError((e) {
+          prepareResult = {'status': 'ERROR', 'error': e.toString()};
+          return prepareResult;
+        });
 
     // Listen to REAL native progress events
     final progressSub = _ttpProgressController.stream.listen((event) {
@@ -378,58 +391,79 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
       }
     });
 
-    // Show dialog
+    // Show compact dialog (matching existing _buildLoadingOverlay style)
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) {
           dialogSetState = setState;
+          const brandColor = Color(0xFFC2410C);
           return Dialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 4,
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFC2410C)),
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFFF2E9), Color(0xFFFFF8F4)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 12,
+                      offset: Offset(0, 6),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Preparing Payment Reader',
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 400),
-                    child: Text(
-                      currentMessage,
-                      key: ValueKey(currentMessage),
-                      style: const TextStyle(color: Colors.black54, fontSize: 13),
-                      textAlign: TextAlign.center,
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            valueColor: AlwaysStoppedAnimation<Color>(brandColor),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Flexible(
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            child: Text(
+                              currentMessage,
+                              key: ValueKey(currentMessage),
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  LinearProgressIndicator(
-                    value: (currentStep + 1) / stepMessages.length,
-                    backgroundColor: Colors.grey[200],
-                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFC2410C)),
-                    minHeight: 6,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Step ${currentStep + 1} of ${stepMessages.length}',
-                    style: const TextStyle(color: Colors.black38, fontSize: 11),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: 160,
+                      child: LinearProgressIndicator(
+                        value: (currentStep + 1) / stepMessages.length,
+                        backgroundColor: const Color(0xFFF5D8C9),
+                        valueColor: const AlwaysStoppedAnimation<Color>(brandColor),
+                        minHeight: 4,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -446,14 +480,17 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
       fallbackTimer.cancel();
     }
 
-    // Show "Ready!" briefly then close
-    if (dialogSetState != null) {
+    // specific status check to avoid showing "Ready!" on failure
+    final isSuccess = prepareResult['status'] == 'READY';
+    
+    // Show "Ready!" briefly then close ONLY if successful
+    if (isSuccess && dialogSetState != null) {
       dialogSetState!(() {
         currentStep = stepMessages.length - 1;
         currentMessage = stepMessages.last;
       });
+      await Future.delayed(const Duration(milliseconds: 700));
     }
-    await Future.delayed(const Duration(milliseconds: 700));
 
     if (mounted && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
@@ -727,15 +764,32 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                   _checkNfcOnStartup();
                   _injectWebViewFixes(controller);
                 },
+                onReceivedServerTrustAuthRequest: (controller, challenge) async {
+                  return ServerTrustAuthResponse(action: ServerTrustAuthResponseAction.PROCEED);
+                },
                 onReceivedError: (controller, request, error) async {
                   if (!mounted) return;
+                  // Ignore subframe errors or non-critical resource failures
                   if (request.isForMainFrame != true) return;
+
                   _pageLoaded = true;
                   _maybeHideSplash();
+
+                  // Auto-retry logic for connection issues
+                  if (_retryCount < 5) {
+                    _retryTimer?.cancel();
+                    _retryTimer = Timer(const Duration(seconds: 5), () {
+                      if (mounted) {
+                        _webViewController?.reload();
+                      }
+                    });
+                    _retryCount++;
+                  }
+
                   setState(() {
                     _isPageLoading = false;
                     _hasPageLoadError = true;
-                    _pageLoadErrorMessage = error.description;
+                    _pageLoadErrorMessage = "${error.description}\n(Retrying $_retryCount/5...)";
                     _showWebView = false;
                   });
                 },
@@ -919,62 +973,53 @@ class _KioskWebViewScreenState extends State<KioskWebViewScreen>
                         } on PlatformException catch (e) {
                           final normalizedCode = _normalizeCode(e.code);
 
-                          // Handle device capability issues (NFC not supported/disabled)
-                          if (normalizedCode == "NFC_UNSUPPORTED" ||
-                              normalizedCode == "NFC_DISABLED") {
-                            await _notifyWebStatus({
-                              "ok": false,
-                              "type": "DEVICE_CAPABILITY",
-                              "code": normalizedCode,
-                              "errorCode": normalizedCode,
-                              "reason": normalizedCode,
-                              "message": e.message ?? "NFC not available",
-                            });
-                            if (mounted) {
-                              setState(() => _isPaymentProcessing = false);
-                            }
-                            return {
-                              "ok": false,
-                              "type": "DEVICE_CAPABILITY",
-                              "code": normalizedCode,
-                              "reason": normalizedCode,
-                            };
-                          }
+                          // Device capability errors: silently redirect to card flow
+                          // (no dialog shown — same behavior as old APK)
+                          const silentFallbackCodes = {
+                            "NFC_UNSUPPORTED",
+                            "NFC_DISABLED",
+                            "UNSUPPORTED_OS",
+                            "UNSUPPORTED_DEVICE",
+                            // Covers: no TEE, outdated security patch, rooted device,
+                            // developer options on, hardware keystore missing
+                            "TAP_TO_PAY_INSECURE_ENVIRONMENT",
+                            "READER_ERROR",
+                            "CONTACTLESS_TRANSACTION_FAILED",
+                            "LOCATION_SERVICES_DISABLED",
+                            "LOCATION_PERMISSION_DENIED",
+                            "SERVER_UNREACHABLE",
+                            "PAYMENT_CANCELLED",
+                            "BUSY",
+                            "PAYMENT_TIMEOUT",
+                            "NO_READER_FOUND",
+                            "DISCOVERY_TIMEOUT",
+                            "CONNECT_FAILED",
+                          };
 
-                          final isFallbackCase = _fallbackEligibleCodes
+                          final isSilentFallback = silentFallbackCodes
                               .contains(normalizedCode);
-                          final errorPayload = isFallbackCase
-                              ? _buildFallbackPayload(
-                                  code: normalizedCode.isEmpty
-                                      ? "NATIVE_ERROR"
-                                      : normalizedCode,
-                                  reason: normalizedCode.isEmpty
-                                      ? "NATIVE_ERROR"
-                                      : normalizedCode,
-                                  message:
-                                      e.message ??
-                                      "Tap to Pay unavailable. Use card flow.",
-                                  details: e.details,
-                                )
-                              : {
-                                  "ok": false,
-                                  "type": "PAYMENT_RESULT",
-                                  "reason": "NATIVE_ERROR",
-                                  "code": e.code,
-                                  "message": e.message,
-                                  "details": e.details,
-                                  "canFallbackToCard": true,
-                                  "fallbackAction": "USE_EXISTING_CARD_FLOW",
-                                  "exitFlow": true,
-                                };
-                          if (!isFallbackCase) {
+
+                          final errorPayload = _buildFallbackPayload(
+                            code: normalizedCode.isEmpty
+                                ? "NATIVE_ERROR"
+                                : normalizedCode,
+                            reason: normalizedCode.isEmpty
+                                ? "NATIVE_ERROR"
+                                : normalizedCode,
+                            message: e.message ??
+                                "Tap to Pay unavailable. Use card flow.",
+                            details: e.details,
+                          );
+
+                          // Only show dialog for truly unexpected errors
+                          if (!isSilentFallback) {
                             await _showPaymentErrorDialog(
                               title: "Payment Failed",
-                              message:
-                                  e.message ??
+                              message: e.message ??
                                   "Payment failed. Please try again.",
                             );
                           }
+
                           await _notifyWebStatus(errorPayload);
                           return errorPayload;
                         } catch (e) {
